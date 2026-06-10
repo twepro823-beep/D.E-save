@@ -16,8 +16,9 @@
 	SaveToFile(root, path, options) uses executor APIs such as writefile,
 	appendfile, makefolder/isfolder, and request/http_request.
 
-	This does not decompile scripts, read bytecode, serialize Terrain voxels, or
-	use hidden-property/nil-instance tricks.
+	This does not decompile scripts, read bytecode, embed TerrainRegion binary
+	data, or use hidden-property/nil-instance tricks. Terrain voxels can be
+	exported separately as chunked JSON files.
 ]]
 
 local SaveInstance = {}
@@ -25,11 +26,16 @@ local SaveInstance = {}
 local DEFAULT_OPTIONS = {
 	IncludeScripts = false,
 	SaveAssets = false,
+	SaveTerrain = false,
 	ShowReadMe = false,
 	IgnoreDefaultProperties = false,
 	AlternativeWritefile = true,
 	WriteSegmentSize = 4 * 1024 * 1024,
 	AssetsFolder = "saveinstance_assets",
+	TerrainFolder = "saveinstance_terrain",
+	TerrainResolution = 4,
+	TerrainChunkSize = 64,
+	TerrainRegion = nil,
 	RequestTimeout = 20,
 	Callback = nil,
 	IgnoreClasses = {},
@@ -376,11 +382,16 @@ local function copyDefaults()
 	local options = {
 		IncludeScripts = DEFAULT_OPTIONS.IncludeScripts,
 		SaveAssets = DEFAULT_OPTIONS.SaveAssets,
+		SaveTerrain = DEFAULT_OPTIONS.SaveTerrain,
 		ShowReadMe = DEFAULT_OPTIONS.ShowReadMe,
 		IgnoreDefaultProperties = DEFAULT_OPTIONS.IgnoreDefaultProperties,
 		AlternativeWritefile = DEFAULT_OPTIONS.AlternativeWritefile,
 		WriteSegmentSize = DEFAULT_OPTIONS.WriteSegmentSize,
 		AssetsFolder = DEFAULT_OPTIONS.AssetsFolder,
+		TerrainFolder = DEFAULT_OPTIONS.TerrainFolder,
+		TerrainResolution = DEFAULT_OPTIONS.TerrainResolution,
+		TerrainChunkSize = DEFAULT_OPTIONS.TerrainChunkSize,
+		TerrainRegion = DEFAULT_OPTIONS.TerrainRegion,
 		RequestTimeout = DEFAULT_OPTIONS.RequestTimeout,
 		Callback = DEFAULT_OPTIONS.Callback,
 		IgnoreClasses = {},
@@ -418,6 +429,10 @@ local function mergeOptions(userOptions)
 		options.SaveAssets = userOptions.SaveAssets == true
 	end
 
+	if userOptions.SaveTerrain ~= nil then
+		options.SaveTerrain = userOptions.SaveTerrain == true
+	end
+
 	if userOptions.ShowReadMe ~= nil then
 		options.ShowReadMe = userOptions.ShowReadMe == true
 	end
@@ -436,6 +451,22 @@ local function mergeOptions(userOptions)
 
 	if type(userOptions.AssetsFolder) == "string" and userOptions.AssetsFolder ~= "" then
 		options.AssetsFolder = userOptions.AssetsFolder
+	end
+
+	if type(userOptions.TerrainFolder) == "string" and userOptions.TerrainFolder ~= "" then
+		options.TerrainFolder = userOptions.TerrainFolder
+	end
+
+	if type(userOptions.TerrainResolution) == "number" and userOptions.TerrainResolution > 0 then
+		options.TerrainResolution = math.floor(userOptions.TerrainResolution)
+	end
+
+	if type(userOptions.TerrainChunkSize) == "number" and userOptions.TerrainChunkSize > 0 then
+		options.TerrainChunkSize = math.floor(userOptions.TerrainChunkSize)
+	end
+
+	if typeof(userOptions.TerrainRegion) == "Region3" then
+		options.TerrainRegion = userOptions.TerrainRegion
 	end
 
 	if type(userOptions.RequestTimeout) == "number" and userOptions.RequestTimeout > 0 then
@@ -1317,6 +1348,281 @@ local function saveAssets(root, options)
 	return result
 end
 
+local function encodeJson(value)
+	local okService, httpService = pcall(function()
+		return game:GetService("HttpService")
+	end)
+
+	if not okService or not httpService then
+		return nil, "HttpService is not available"
+	end
+
+	local ok, encoded = pcall(function()
+		return httpService:JSONEncode(value)
+	end)
+
+	if not ok then
+		return nil, encoded
+	end
+
+	return encoded
+end
+
+local function findTerrain(root)
+	if root:IsA("Terrain") then
+		return root
+	end
+
+	local okWorkspaceTerrain, terrain = pcall(function()
+		return workspace.Terrain
+	end)
+
+	if okWorkspaceTerrain and terrain and (root == game or root == workspace or terrain:IsDescendantOf(root)) then
+		return terrain
+	end
+
+	local okFind, found = pcall(function()
+		return root:FindFirstChildOfClass("Terrain")
+	end)
+
+	if okFind then
+		return found
+	end
+
+	return nil
+end
+
+local function getRegionBounds(region, resolution)
+	local center = region.CFrame.Position
+	local halfSize = region.Size / 2
+	local min = center - halfSize
+	local max = center + halfSize
+
+	min = Vector3.new(
+		math.floor(min.X / resolution) * resolution,
+		math.floor(min.Y / resolution) * resolution,
+		math.floor(min.Z / resolution) * resolution
+	)
+
+	max = Vector3.new(
+		math.ceil(max.X / resolution) * resolution,
+		math.ceil(max.Y / resolution) * resolution,
+		math.ceil(max.Z / resolution) * resolution
+	)
+
+	return min, max
+end
+
+local function getTerrainRegion(terrain, options)
+	if options.TerrainRegion then
+		return options.TerrainRegion:ExpandToGrid(options.TerrainResolution)
+	end
+
+	local ok, extents = pcall(function()
+		return terrain.MaxExtents
+	end)
+
+	if not ok or not extents then
+		return nil, "TerrainRegion was not provided and Terrain.MaxExtents is unavailable"
+	end
+
+	local minCell = extents.Min
+	local maxCell = extents.Max
+
+	if not minCell or not maxCell then
+		return nil, "Terrain.MaxExtents did not provide Min/Max"
+	end
+
+	if minCell.X >= maxCell.X or minCell.Y >= maxCell.Y or minCell.Z >= maxCell.Z then
+		return nil, "terrain appears to be empty"
+	end
+
+	local resolution = options.TerrainResolution
+	local min = Vector3.new(minCell.X * resolution, minCell.Y * resolution, minCell.Z * resolution)
+	local max = Vector3.new((maxCell.X + 1) * resolution, (maxCell.Y + 1) * resolution, (maxCell.Z + 1) * resolution)
+
+	return Region3.new(min, max):ExpandToGrid(resolution)
+end
+
+local function materialName(material)
+	if typeof(material) == "EnumItem" then
+		return material.Name
+	end
+
+	return tostring(material)
+end
+
+local function readTerrainChunk(terrain, region, resolution)
+	local ok, materials, occupancies = pcall(function()
+		return terrain:ReadVoxels(region, resolution)
+	end)
+
+	if not ok then
+		return nil, materials
+	end
+
+	local cells = {}
+
+	for x, plane in ipairs(materials) do
+		for y, row in ipairs(plane) do
+			for z, material in ipairs(row) do
+				local occupancy = occupancies[x][y][z]
+
+				if material ~= Enum.Material.Air or occupancy > 0 then
+					table.insert(cells, {
+						x,
+						y,
+						z,
+						materialName(material),
+						occupancy,
+					})
+				end
+			end
+		end
+	end
+
+	return cells
+end
+
+local function saveTerrain(root, options)
+	local result = {
+		Chunks = {},
+		Errors = {},
+		Folder = options.TerrainFolder,
+	}
+
+	local terrain = findTerrain(root)
+
+	if not terrain then
+		table.insert(result.Errors, "terrain was not found under the selected root")
+		return result
+	end
+
+	local okFolder, folderErr = ensureFolder(options.TerrainFolder)
+
+	if not okFolder then
+		table.insert(result.Errors, "could not create terrain folder: " .. tostring(folderErr))
+		return result
+	end
+
+	local region, regionErr = getTerrainRegion(terrain, options)
+
+	if not region then
+		table.insert(result.Errors, regionErr)
+		return result
+	end
+
+	local resolution = options.TerrainResolution
+	local chunkSize = options.TerrainChunkSize
+	local chunkStuds = chunkSize * resolution
+	local min, max = getRegionBounds(region, resolution)
+	local totalX = math.max(1, math.ceil((max.X - min.X) / chunkStuds))
+	local totalY = math.max(1, math.ceil((max.Y - min.Y) / chunkStuds))
+	local totalZ = math.max(1, math.ceil((max.Z - min.Z) / chunkStuds))
+	local totalChunks = totalX * totalY * totalZ
+	local chunkIndex = 0
+	local manifestLines = {
+		"Index\tPath\tCellCount\tMin\tMax",
+	}
+
+	result.Region = {
+		Min = { min.X, min.Y, min.Z },
+		Max = { max.X, max.Y, max.Z },
+		Resolution = resolution,
+		ChunkSize = chunkSize,
+	}
+
+	for xIndex = 0, totalX - 1 do
+		for yIndex = 0, totalY - 1 do
+			for zIndex = 0, totalZ - 1 do
+				chunkIndex += 1
+
+				local chunkMin = Vector3.new(
+					min.X + xIndex * chunkStuds,
+					min.Y + yIndex * chunkStuds,
+					min.Z + zIndex * chunkStuds
+				)
+				local chunkMax = Vector3.new(
+					math.min(chunkMin.X + chunkStuds, max.X),
+					math.min(chunkMin.Y + chunkStuds, max.Y),
+					math.min(chunkMin.Z + chunkStuds, max.Z)
+				)
+				local chunkRegion = Region3.new(chunkMin, chunkMax):ExpandToGrid(resolution)
+				local cells, readErr = readTerrainChunk(terrain, chunkRegion, resolution)
+
+				report(options, string.format("Saving terrain chunk %d/%d", chunkIndex, totalChunks), 0.95)
+
+				if cells then
+					local chunkData = {
+						Version = 1,
+						Resolution = resolution,
+						Min = { chunkMin.X, chunkMin.Y, chunkMin.Z },
+						Max = { chunkMax.X, chunkMax.Y, chunkMax.Z },
+						Cells = cells,
+					}
+					local encoded, encodeErr = encodeJson(chunkData)
+					local path = normalizePath(string.format(
+						"%s/chunk_%03d_%03d_%03d.json",
+						options.TerrainFolder,
+						xIndex,
+						yIndex,
+						zIndex
+					))
+
+					if encoded then
+						local okWrite, writeErr = writeFileSegmented(path, encoded, options)
+
+						if okWrite then
+							local chunk = {
+								Path = path,
+								CellCount = #cells,
+								Min = chunkData.Min,
+								Max = chunkData.Max,
+							}
+
+							table.insert(result.Chunks, chunk)
+							table.insert(manifestLines, table.concat({
+								tostring(chunkIndex),
+								path,
+								tostring(#cells),
+								table.concat(chunkData.Min, ","),
+								table.concat(chunkData.Max, ","),
+							}, "\t"))
+						else
+							table.insert(result.Errors, "terrain chunk " .. tostring(chunkIndex) .. ": " .. tostring(writeErr))
+						end
+					else
+						table.insert(result.Errors, "terrain chunk " .. tostring(chunkIndex) .. ": " .. tostring(encodeErr))
+					end
+				else
+					table.insert(result.Errors, "terrain chunk " .. tostring(chunkIndex) .. ": " .. tostring(readErr))
+				end
+			end
+		end
+	end
+
+	local manifest = {
+		Version = 1,
+		Folder = options.TerrainFolder,
+		Region = result.Region,
+		ChunkCount = #result.Chunks,
+		Chunks = result.Chunks,
+	}
+	local encodedManifest = encodeJson(manifest)
+
+	if encodedManifest then
+		writeFileSegmented(normalizePath(options.TerrainFolder .. "/manifest.json"), encodedManifest, options)
+	end
+
+	local writefile = getExecutorFunction("writefile")
+
+	if writefile then
+		pcall(writefile, normalizePath(options.TerrainFolder .. "/manifest.tsv"), table.concat(manifestLines, "\n"))
+	end
+
+	return result
+end
+
 function SaveInstance.SaveInstance(root, userOptions)
 	assert(typeof(root) == "Instance", "SaveInstance(root, options) expects root to be an Instance")
 
@@ -1344,6 +1650,10 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		options.AssetsFolder = normalizePath(folder .. "/" .. DEFAULT_OPTIONS.AssetsFolder)
 	end
 
+	if options.SaveTerrain and (type(userOptions) ~= "table" or userOptions.TerrainFolder == nil) and folder then
+		options.TerrainFolder = normalizePath(folder .. "/" .. DEFAULT_OPTIONS.TerrainFolder)
+	end
+
 	local xml = buildDocument(root, options)
 	local okWrite, writeErr = writeFileSegmented(normalizedPath, xml, options)
 
@@ -1355,20 +1665,52 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		Assets = {},
 		Errors = {},
 	}
+	local terrainResult = {
+		Chunks = {},
+		Errors = {},
+	}
 
 	if options.SaveAssets then
 		assetResult = saveAssets(root, options)
 	end
 
+	if options.SaveTerrain then
+		terrainResult = saveTerrain(root, options)
+	end
+
+	local errors = {}
+
+	for _, err in ipairs(assetResult.Errors) do
+		table.insert(errors, err)
+	end
+
+	for _, err in ipairs(terrainResult.Errors) do
+		table.insert(errors, err)
+	end
+
 	report(options, "Done", 1)
 
 	return {
-		Ok = #assetResult.Errors == 0,
+		Ok = #errors == 0,
 		Path = normalizedPath,
 		Content = xml,
 		Assets = assetResult.Assets,
-		Errors = assetResult.Errors,
+		Terrain = terrainResult,
+		Errors = errors,
 	}
+end
+
+function SaveInstance.SaveTerrain(root, folderPath, userOptions)
+	assert(typeof(root) == "Instance", "SaveTerrain(root, folderPath, options) expects root to be an Instance")
+
+	local options = mergeOptions(userOptions)
+	options.SaveTerrain = true
+
+	if type(folderPath) == "string" and folderPath ~= "" then
+		options.TerrainFolder = normalizePath(folderPath)
+	end
+
+	return saveTerrain(root, options)
 end
 
 setmetatable(SaveInstance, {
