@@ -1,0 +1,19 @@
+# Roblox / Luau tooling
+sourcemap.json
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+
+# Executor output
+dumps/
+saveinstance_assets/
+*_assets/
+manifest.tsv
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
