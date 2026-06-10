@@ -10,7 +10,8 @@ Basic Roblox SaveInstance implementation written in Luau for executor environmen
 - Can embed Terrain `SmoothGrid` and `PhysicsGrid` data into the generated `.rbxlx` when the executor supports `gethiddenproperty`.
 - Can preserve attributes and CollectionService tags in best-effort binary properties.
 - Preserves asset references such as `MeshId`, `TextureID`, `SoundId`, `AnimationId`, `ShirtTemplate`, `PantsTemplate`, `Graphic`, and `Texture`.
-- Includes `Script`, `LocalScript`, and `ModuleScript` instances with empty `Source` placeholders.
+- Can decompile `Script`, `LocalScript`, and `ModuleScript` sources through ByteFall by default, with optional fallback to the executor's `decompile`.
+- Includes client-visible containers like `StarterGui`, `ReplicatedStorage`, and `ReplicatedFirst` by default.
 - Supports progress callbacks, segmented writing with `appendfile`, simple metadata, filters, and optional default-property skipping.
 
 ## Usage
@@ -23,6 +24,8 @@ local result = SaveInstance.SaveToFile(workspace, "dumps/place.rbxlx", {
 	SaveTerrain = true,
 	SaveAttributes = true,
 	SaveTags = true,
+	DecompileScripts = true,
+	UseByteFallDecompiler = true,
 	ShowReadMe = true,
 	IgnoreDefaultProperties = false,
 	Callback = function(message, progress)
@@ -51,6 +54,11 @@ print(xml)
 	SaveAttributes = true,
 	SaveTags = true,
 	SaveHiddenProperties = true,
+	DecompileScripts = true,
+	UseByteFallDecompiler = true,
+	ByteFallEndpoint = "https://decompiler.bytefall.dev/decompile",
+	FallbackToSystemDecompiler = true,
+	DecompilerTimeout = 30,
 	RobloxLikeReferents = true,
 	ShowStatus = false,
 	ShowReadMe = false,
@@ -73,14 +81,24 @@ print(xml)
 }
 ```
 
+To disable ByteFall and use the executor's decompiler instead:
+
+```lua
+local result = SaveInstance.SaveToFile(workspace, "dumps/place.rbxlx", {
+	UseByteFallDecompiler = false,
+	FallbackToSystemDecompiler = true,
+})
+```
+
 ## Current limitations
 
 - Terrain embedding requires `gethiddenproperty` support for `SmoothGrid` and `PhysicsGrid`.
 - Attribute and tag export uses D.E save's own best-effort binary payloads inside `AttributesSerialize` and `Tags`.
-- Script source is not decompiled or recovered; scripts are saved with empty `Source` placeholders.
+- ByteFall decompilation sends script bytecode through HTTP to `ByteFallEndpoint`; disable `UseByteFallDecompiler` to use the executor's `decompile` fallback instead.
+- Script decompilation depends on executor support for `getscriptbytecode`, HTTP request APIs, or a global `decompile` function.
 - RBXLX output is intentionally basic and is not a perfect 1:1 copy of Roblox Studio's exporter.
 - Asset downloading depends on executor HTTP support and Roblox asset permissions.
-- Hidden properties are used for Terrain grids and optional mesh/union binary data; nil instances, bytecode/decompiler APIs, and script-killing behavior are intentionally not used.
+- Hidden properties are used for Terrain grids and optional mesh/union binary data; nil instances and script-killing behavior are intentionally not used.
 
 ## License
 

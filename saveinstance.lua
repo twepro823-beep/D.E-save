@@ -16,9 +16,9 @@
 	SaveToFile(root, path, options) uses executor APIs such as writefile,
 	appendfile, makefolder/isfolder, and request/http_request.
 
-	This does not decompile scripts, read bytecode, or use nil-instance tricks.
-	Terrain can be embedded with executor gethiddenproperty grids encoded as
-	base64 BinaryString properties.
+	This can decompile scripts through ByteFall or a system decompiler when
+	enabled. It does not use nil-instance tricks. Terrain can be embedded with
+	executor gethiddenproperty grids encoded as base64 BinaryString properties.
 ]]
 
 local SaveInstance = {}
@@ -30,6 +30,11 @@ local DEFAULT_OPTIONS = {
 	SaveAttributes = true,
 	SaveTags = true,
 	SaveHiddenProperties = true,
+	DecompileScripts = true,
+	UseByteFallDecompiler = true,
+	ByteFallEndpoint = "https://decompiler.bytefall.dev/decompile",
+	FallbackToSystemDecompiler = true,
+	DecompilerTimeout = 30,
 	RobloxLikeReferents = true,
 	ShowStatus = false,
 	ShowReadMe = false,
@@ -47,7 +52,7 @@ local DEFAULT_OPTIONS = {
 		Chat = true,
 		Players = true,
 		StarterPlayer = true,
-		StarterGui = true,
+		StarterGui = false,
 		StarterPack = true,
 		Lighting = false,
 		ReplicatedFirst = false,
@@ -69,6 +74,56 @@ local CLASS_PROPERTIES = {
 	Workspace = {
 		"Gravity",
 		"FallenPartsDestroyHeight",
+	},
+
+	StarterGui = {
+		"ProcessUserInput",
+		"ResetPlayerGuiOnSpawn",
+		"ScreenOrientation",
+		"ShowDevelopmentGui",
+	},
+
+	ReplicatedStorage = {},
+
+	ReplicatedFirst = {},
+
+	StarterPack = {},
+
+	Lighting = {
+		"Ambient",
+		"Brightness",
+		"ClockTime",
+		"ColorShift_Bottom",
+		"ColorShift_Top",
+		"EnvironmentDiffuseScale",
+		"EnvironmentSpecularScale",
+		"ExposureCompensation",
+		"FogColor",
+		"FogEnd",
+		"FogStart",
+		"GeographicLatitude",
+		"GlobalShadows",
+		"OutdoorAmbient",
+		"ShadowSoftness",
+		"Technology",
+		"TimeOfDay",
+	},
+
+	SoundService = {
+		"AmbientReverb",
+		"DistanceFactor",
+		"DopplerScale",
+		"RespectFilteringEnabled",
+		"RolloffScale",
+		"VolumetricAudio",
+	},
+
+	Teams = {},
+
+	TextChatService = {
+		"ChatTranslationEnabled",
+		"CreateDefaultCommands",
+		"CreateDefaultTextChannels",
 	},
 
 	Camera = {
@@ -694,6 +749,106 @@ local CLASS_PROPERTIES = {
 		"ZIndex",
 	},
 
+	ScrollingFrame = {
+		"Active",
+		"AnchorPoint",
+		"AutomaticCanvasSize",
+		"AutomaticSize",
+		"BackgroundColor3",
+		"BackgroundTransparency",
+		"BorderColor3",
+		"BorderMode",
+		"BorderSizePixel",
+		"BottomImage",
+		"CanvasPosition",
+		"CanvasSize",
+		"ClipsDescendants",
+		"ElasticBehavior",
+		"HorizontalScrollBarInset",
+		"LayoutOrder",
+		"MidImage",
+		"Position",
+		"Rotation",
+		"ScrollBarImageColor3",
+		"ScrollBarImageTransparency",
+		"ScrollBarThickness",
+		"ScrollingDirection",
+		"ScrollingEnabled",
+		"Selectable",
+		"Size",
+		"SizeConstraint",
+		"TopImage",
+		"VerticalScrollBarInset",
+		"VerticalScrollBarPosition",
+		"Visible",
+		"ZIndex",
+	},
+
+	CanvasGroup = {
+		"Active",
+		"AnchorPoint",
+		"AutomaticSize",
+		"BackgroundColor3",
+		"BackgroundTransparency",
+		"BorderColor3",
+		"BorderMode",
+		"BorderSizePixel",
+		"GroupColor3",
+		"GroupTransparency",
+		"LayoutOrder",
+		"Position",
+		"Rotation",
+		"Selectable",
+		"Size",
+		"SizeConstraint",
+		"Visible",
+		"ZIndex",
+	},
+
+	VideoFrame = {
+		"Active",
+		"AnchorPoint",
+		"BackgroundColor3",
+		"BackgroundTransparency",
+		"BorderColor3",
+		"BorderMode",
+		"BorderSizePixel",
+		"LayoutOrder",
+		"Looped",
+		"Playing",
+		"Position",
+		"Resolution",
+		"Rotation",
+		"Size",
+		"SizeConstraint",
+		"TimePosition",
+		"Video",
+		"Visible",
+		"Volume",
+		"ZIndex",
+	},
+
+	ViewportFrame = {
+		"Active",
+		"Ambient",
+		"AnchorPoint",
+		"BackgroundColor3",
+		"BackgroundTransparency",
+		"BorderColor3",
+		"BorderMode",
+		"BorderSizePixel",
+		"CurrentCamera",
+		"ImageColor3",
+		"ImageTransparency",
+		"LightColor",
+		"LightDirection",
+		"Position",
+		"Rotation",
+		"Size",
+		"Visible",
+		"ZIndex",
+	},
+
 	UICorner = {
 		"CornerRadius",
 	},
@@ -731,6 +886,21 @@ local CLASS_PROPERTIES = {
 		"SortOrder",
 		"StartCorner",
 		"VerticalAlignment",
+	},
+
+	UIAspectRatioConstraint = {
+		"AspectRatio",
+		"AspectType",
+		"DominantAxis",
+	},
+
+	UIScale = {
+		"Scale",
+	},
+
+	UITextSizeConstraint = {
+		"MaxTextSize",
+		"MinTextSize",
 	},
 
 	UIPadding = {
@@ -814,6 +984,11 @@ local function copyDefaults()
 		SaveAttributes = DEFAULT_OPTIONS.SaveAttributes,
 		SaveTags = DEFAULT_OPTIONS.SaveTags,
 		SaveHiddenProperties = DEFAULT_OPTIONS.SaveHiddenProperties,
+		DecompileScripts = DEFAULT_OPTIONS.DecompileScripts,
+		UseByteFallDecompiler = DEFAULT_OPTIONS.UseByteFallDecompiler,
+		ByteFallEndpoint = DEFAULT_OPTIONS.ByteFallEndpoint,
+		FallbackToSystemDecompiler = DEFAULT_OPTIONS.FallbackToSystemDecompiler,
+		DecompilerTimeout = DEFAULT_OPTIONS.DecompilerTimeout,
 		RobloxLikeReferents = DEFAULT_OPTIONS.RobloxLikeReferents,
 		ShowStatus = DEFAULT_OPTIONS.ShowStatus,
 		ShowReadMe = DEFAULT_OPTIONS.ShowReadMe,
@@ -872,6 +1047,26 @@ local function mergeOptions(userOptions)
 
 	if userOptions.SaveHiddenProperties ~= nil then
 		options.SaveHiddenProperties = userOptions.SaveHiddenProperties == true
+	end
+
+	if userOptions.DecompileScripts ~= nil then
+		options.DecompileScripts = userOptions.DecompileScripts == true
+	end
+
+	if userOptions.UseByteFallDecompiler ~= nil then
+		options.UseByteFallDecompiler = userOptions.UseByteFallDecompiler == true
+	end
+
+	if type(userOptions.ByteFallEndpoint) == "string" and userOptions.ByteFallEndpoint ~= "" then
+		options.ByteFallEndpoint = userOptions.ByteFallEndpoint
+	end
+
+	if userOptions.FallbackToSystemDecompiler ~= nil then
+		options.FallbackToSystemDecompiler = userOptions.FallbackToSystemDecompiler == true
+	end
+
+	if type(userOptions.DecompilerTimeout) == "number" and userOptions.DecompilerTimeout > 0 then
+		options.DecompilerTimeout = userOptions.DecompilerTimeout
 	end
 
 	if userOptions.RobloxLikeReferents ~= nil then
@@ -1577,6 +1772,190 @@ local function appendUniqueError(errors, message)
 	table.insert(errors, message)
 end
 
+local function getExecutorRequestFunction()
+	local directRequest = getCallableGlobal("request")
+		or getCallableGlobal("http_request")
+		or getCallableGlobal("httpRequest")
+
+	if directRequest then
+		return directRequest
+	end
+
+	local okSyn, synTable = pcall(function()
+		return syn
+	end)
+
+	if okSyn and type(synTable) == "table" and type(synTable.request) == "function" then
+		return synTable.request
+	end
+
+	local okFluxus, fluxusTable = pcall(function()
+		return fluxus
+	end)
+
+	if okFluxus and type(fluxusTable) == "table" and type(fluxusTable.request) == "function" then
+		return fluxusTable.request
+	end
+
+	local okHttp, httpTable = pcall(function()
+		return http
+	end)
+
+	if okHttp and type(httpTable) == "table" and type(httpTable.request) == "function" then
+		return httpTable.request
+	end
+
+	return nil
+end
+
+local function getResponseBody(response)
+	if type(response) == "string" then
+		return response
+	end
+
+	if type(response) ~= "table" then
+		return nil
+	end
+
+	return response.Body or response.body or response.Data or response.data
+end
+
+local function getResponseStatus(response)
+	if type(response) ~= "table" then
+		return 200
+	end
+
+	return response.StatusCode or response.Status or response.status_code or response.status or 0
+end
+
+local function jsonEscape(value)
+	value = tostring(value)
+	value = value:gsub("\\", "\\\\")
+	value = value:gsub("\"", "\\\"")
+	value = value:gsub(string.char(8), "\\b")
+	value = value:gsub(string.char(12), "\\f")
+	value = value:gsub("\n", "\\n")
+	value = value:gsub("\r", "\\r")
+	value = value:gsub("\t", "\\t")
+	return value
+end
+
+local function getScriptBytecodeFunction()
+	return getCallableGlobal("getscriptbytecode")
+end
+
+local function getSystemDecompilerFunction()
+	return getCallableGlobal("decompile")
+end
+
+local function decompileWithSystem(scriptInstance)
+	local systemDecompiler = getSystemDecompilerFunction()
+
+	if not systemDecompiler then
+		return nil, "system decompiler is not available"
+	end
+
+	local ok, source = pcall(systemDecompiler, scriptInstance)
+
+	if ok and type(source) == "string" and source ~= "" then
+		return source
+	end
+
+	return nil, ok and "system decompiler returned empty source" or tostring(source)
+end
+
+local function decompileWithByteFall(scriptInstance, options)
+	local getscriptbytecode = getScriptBytecodeFunction()
+
+	if not getscriptbytecode then
+		return nil, "getscriptbytecode is not available"
+	end
+
+	local okBytecode, bytecode = pcall(getscriptbytecode, scriptInstance)
+
+	if not okBytecode then
+		return nil, "getscriptbytecode failed: " .. tostring(bytecode)
+	end
+
+	if type(bytecode) ~= "string" or bytecode == "" then
+		return nil, "getscriptbytecode returned empty"
+	end
+
+	local request = getExecutorRequestFunction()
+
+	if not request then
+		return nil, "no http request function available"
+	end
+
+	local encoded = encodeBase64(bytecode)
+	local body = "{\"script\":\"" .. jsonEscape(encoded) .. "\"}"
+	local okRequest, response = pcall(request, {
+		Url = options.ByteFallEndpoint,
+		Method = "POST",
+		Headers = {
+			["Content-Type"] = "application/json",
+		},
+		Body = body,
+		Timeout = options.DecompilerTimeout,
+	})
+
+	if not okRequest then
+		return nil, "ByteFall request failed: " .. tostring(response)
+	end
+
+	local status = getResponseStatus(response)
+	local responseBody = getResponseBody(response) or ""
+
+	if status == 200 and responseBody ~= "" then
+		return responseBody
+	end
+
+	if status == 400 then
+		return nil, "ByteFall 400 bad request: " .. tostring(responseBody)
+	elseif status == 404 then
+		return nil, "ByteFall 404 not found"
+	elseif status == 500 then
+		return nil, "ByteFall 500 decompilation failed: " .. tostring(responseBody)
+	end
+
+	return nil, "ByteFall HTTP " .. tostring(status) .. ": " .. tostring(responseBody)
+end
+
+local function decompileScriptSource(scriptInstance, options)
+	if not options.DecompileScripts then
+		return ""
+	end
+
+	local errors = options._DecompilerErrors
+
+	if options.UseByteFallDecompiler then
+		local source, err = decompileWithByteFall(scriptInstance, options)
+
+		if source then
+			return source
+		end
+
+		appendUniqueError(errors, scriptInstance:GetFullName() .. ": " .. tostring(err))
+
+		if not options.FallbackToSystemDecompiler then
+			return "-- ByteFall: " .. tostring(err)
+		end
+	end
+
+	if options.FallbackToSystemDecompiler then
+		local source, err = decompileWithSystem(scriptInstance)
+
+		if source then
+			return source
+		end
+
+		appendUniqueError(errors, scriptInstance:GetFullName() .. ": " .. tostring(err))
+		return "-- D.E save decompiler failed: " .. tostring(err)
+	end
+
+	return "-- D.E save decompiler disabled or unavailable"
+end
+
 local function appendHiddenBinaryProperty(lines, level, instance, propertyName, errors)
 	local gethiddenproperty = getHiddenPropertyReader()
 
@@ -1740,7 +2119,7 @@ local function appendProperties(lines, level, instance, references, options)
 
 	for _, propertyName in ipairs(getPropertiesFor(instance)) do
 		if isScriptClass(instance.ClassName) and propertyName == "Source" then
-			appendSimpleXml(lines, level + 1, "ProtectedString", "Source", "")
+			appendSimpleXml(lines, level + 1, "ProtectedString", "Source", decompileScriptSource(instance, options))
 		else
 			local ok, value = pcall(function()
 				return instance[propertyName]
@@ -1854,6 +2233,7 @@ local function buildDocument(root, options)
 	local instances = {}
 	options._TerrainErrors = {}
 	options._HiddenErrors = {}
+	options._DecompilerErrors = {}
 	report(options, "Collecting instances", 0)
 	collectInstances(root, options, instances, true)
 	local sawTerrain = false
@@ -1899,10 +2279,16 @@ local function buildDocument(root, options)
 		Enabled = options.SaveHiddenProperties == true,
 		Errors = options._HiddenErrors,
 	}
+	local decompilerResult = {
+		Enabled = options.DecompileScripts == true,
+		UseByteFall = options.UseByteFallDecompiler == true,
+		Errors = options._DecompilerErrors,
+	}
 	options._TerrainErrors = nil
 	options._HiddenErrors = nil
+	options._DecompilerErrors = nil
 
-	return table.concat(lines, "\n"), terrainResult, hiddenResult
+	return table.concat(lines, "\n"), terrainResult, hiddenResult, decompilerResult
 end
 
 local function getExecutorEnvironment()
@@ -2265,7 +2651,7 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		options.AssetsFolder = normalizePath(folder .. "/" .. DEFAULT_OPTIONS.AssetsFolder)
 	end
 
-	local xml, terrainResult, hiddenResult = buildDocument(root, options)
+	local xml, terrainResult, hiddenResult, decompilerResult = buildDocument(root, options)
 	local okWrite, writeErr = writeFileSegmented(normalizedPath, xml, options)
 
 	if not okWrite then
@@ -2295,6 +2681,10 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		table.insert(errors, err)
 	end
 
+	for _, err in ipairs(decompilerResult.Errors) do
+		table.insert(errors, err)
+	end
+
 	report(options, "Done", 1)
 
 	return {
@@ -2304,6 +2694,7 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		Assets = assetResult.Assets,
 		Terrain = terrainResult,
 		HiddenProperties = hiddenResult,
+		Decompiler = decompilerResult,
 		Errors = errors,
 	}
 end
