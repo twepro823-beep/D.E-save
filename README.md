@@ -10,6 +10,7 @@ Basic Roblox SaveInstance implementation written in Luau for executor environmen
 - Can embed Terrain `SmoothGrid` and `PhysicsGrid` data into the generated `.rbxlx` when the executor supports `gethiddenproperty`.
 - Can preserve attributes and CollectionService tags in best-effort binary properties.
 - Preserves asset references such as `MeshId`, `TextureID`, `SoundId`, `AnimationId`, `ShirtTemplate`, `PantsTemplate`, `Graphic`, and `Texture`.
+- Writes mesh, texture, sound, animation, clothing, image, and video asset references as RBXLX `Content` values so Studio has a better chance of reloading them.
 - Can decompile `Script`, `LocalScript`, and `ModuleScript` sources through ByteFall by default, with optional fallback to the executor's `decompile`.
 - Includes client-visible containers like `StarterGui`, `ReplicatedStorage`, and `ReplicatedFirst` by default.
 - Can use the public Roblox API dump to discover more readable/savable properties, with the local whitelist as fallback.
@@ -115,6 +116,7 @@ local result = SaveInstance.SaveToFile(workspace, "dumps/place.rbxlx", {
 - Script decompilation depends on executor support for `getscriptbytecode`, HTTP request APIs, or a global `decompile` function.
 - API dump loading is best-effort. If HTTP or JSON decoding fails, D.E save falls back to the built-in property whitelist.
 - SharedStrings are conservative and disabled by default; enable `UseSharedStrings` mainly for large Terrain or mesh/union binary blobs.
+- Mesh fidelity still depends on what the executor exposes. D.E save saves public `MeshId`/`TextureID`, collision/render fidelity, and tries hidden mesh blobs when `SaveHiddenProperties = true`.
 - RBXLX output is intentionally basic and is not a perfect 1:1 copy of Roblox Studio's exporter.
 - Asset downloading depends on executor HTTP support and Roblox asset permissions.
 - Hidden properties are used for Terrain grids and optional mesh/union binary data; nil instances and script-killing behavior are intentionally not used.

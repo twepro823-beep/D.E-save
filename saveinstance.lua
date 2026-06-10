@@ -161,11 +161,17 @@ local CLASS_PROPERTIES = {
 	MeshPart = {
 		"MeshId",
 		"TextureID",
+		"TextureId",
+		"MeshContent",
+		"TextureContent",
 		"RenderFidelity",
 		"CollisionFidelity",
 		"DoubleSided",
 		"HasJointOffset",
 		"JointOffset",
+		"FluidFidelity",
+		"UsePartColor",
+		"HasSkinnedMesh",
 	},
 
 	UnionOperation = {
@@ -173,6 +179,9 @@ local CLASS_PROPERTIES = {
 		"RenderFidelity",
 		"CollisionFidelity",
 		"SmoothingAngle",
+		"AssetId",
+		"ChildData",
+		"InitialSize",
 	},
 
 	NegateOperation = {
@@ -180,6 +189,9 @@ local CLASS_PROPERTIES = {
 		"RenderFidelity",
 		"CollisionFidelity",
 		"SmoothingAngle",
+		"AssetId",
+		"ChildData",
+		"InitialSize",
 	},
 
 	PartOperation = {
@@ -187,6 +199,9 @@ local CLASS_PROPERTIES = {
 		"RenderFidelity",
 		"CollisionFidelity",
 		"SmoothingAngle",
+		"AssetId",
+		"ChildData",
+		"InitialSize",
 	},
 
 	TrussPart = {
@@ -329,18 +344,26 @@ local CLASS_PROPERTIES = {
 	SpecialMesh = {
 		"MeshId",
 		"TextureId",
+		"MeshID",
+		"TextureID",
 		"MeshType",
 		"Scale",
 		"Offset",
 		"VertexColor",
+		"LODX",
+		"LODY",
 	},
 
 	FileMesh = {
 		"MeshId",
 		"TextureId",
+		"MeshID",
+		"TextureID",
 		"Scale",
 		"Offset",
 		"VertexColor",
+		"LODX",
+		"LODY",
 	},
 
 	BlockMesh = {
@@ -353,6 +376,29 @@ local CLASS_PROPERTIES = {
 		"Scale",
 		"Offset",
 		"VertexColor",
+	},
+
+	SurfaceAppearance = {
+		"AlphaMode",
+		"ColorMap",
+		"MetalnessMap",
+		"NormalMap",
+		"RoughnessMap",
+	},
+
+	Sky = {
+		"CelestialBodiesShown",
+		"MoonAngularSize",
+		"MoonTextureId",
+		"SkyboxBk",
+		"SkyboxDn",
+		"SkyboxFt",
+		"SkyboxLf",
+		"SkyboxRt",
+		"SkyboxUp",
+		"StarCount",
+		"SunAngularSize",
+		"SunTextureId",
 	},
 
 	Decal = {
@@ -970,14 +1016,73 @@ local SKIPPED_SCRIPT_CLASSES = {
 
 local ASSET_PROPERTY_NAMES = {
 	AnimationId = true,
+	ColorMap = true,
+	CursorIcon = true,
 	Graphic = true,
 	MeshId = true,
+	MeshID = true,
+	MeshContent = true,
+	MetalnessMap = true,
+	MoonTextureId = true,
+	NormalMap = true,
 	PantsTemplate = true,
+	RoughnessMap = true,
 	ShirtTemplate = true,
+	SkyboxBk = true,
+	SkyboxDn = true,
+	SkyboxFt = true,
+	SkyboxLf = true,
+	SkyboxRt = true,
+	SkyboxUp = true,
 	SoundId = true,
+	SunTextureId = true,
 	Texture = true,
 	TextureID = true,
 	TextureId = true,
+	TextureContent = true,
+	LinkedSource = true,
+	Video = true,
+	Image = true,
+}
+
+local CONTENT_PROPERTY_NAMES = {
+	AnimationId = true,
+	ColorMap = true,
+	CursorIcon = true,
+	Graphic = true,
+	Image = true,
+	LinkedSource = true,
+	MeshId = true,
+	MeshID = true,
+	MeshContent = true,
+	MetalnessMap = true,
+	MoonTextureId = true,
+	NormalMap = true,
+	PantsTemplate = true,
+	RoughnessMap = true,
+	ShirtTemplate = true,
+	SkyboxBk = true,
+	SkyboxDn = true,
+	SkyboxFt = true,
+	SkyboxLf = true,
+	SkyboxRt = true,
+	SkyboxUp = true,
+	SoundId = true,
+	SunTextureId = true,
+	Texture = true,
+	TextureID = true,
+	TextureId = true,
+	TextureContent = true,
+	Video = true,
+}
+
+local PROPERTY_ALIASES = {
+	MeshId = { "MeshID", "MeshContent" },
+	MeshID = { "MeshId", "MeshContent" },
+	MeshContent = { "MeshId", "MeshID" },
+	TextureID = { "TextureId", "TextureContent" },
+	TextureId = { "TextureID", "TextureContent" },
+	TextureContent = { "TextureID", "TextureId" },
 }
 
 local DEFAULT_INSTANCE_CACHE = {}
@@ -1547,6 +1652,19 @@ local function appendSimpleXml(lines, level, tagName, name, value)
 	))
 end
 
+local function appendContent(lines, level, name, value)
+	local text = tostring(value or "")
+
+	if text == "" then
+		return false
+	end
+
+	table.insert(lines, string.format("%s<Content name=\"%s\">", indent(level), xmlEscape(name)))
+	table.insert(lines, string.format("%s<url>%s</url>", indent(level + 1), xmlEscape(text)))
+	table.insert(lines, string.format("%s</Content>", indent(level)))
+	return true
+end
+
 local function getSharedStringId(options, encodedValue)
 	options._SharedStrings = options._SharedStrings or {}
 	options._SharedStringOrder = options._SharedStringOrder or {}
@@ -1907,7 +2025,11 @@ local function appendProperty(lines, level, name, value, references)
 	if valueType == "nil" then
 		return false
 	elseif valueType == "string" then
-		appendSimpleXml(lines, level, "string", name, value)
+		if CONTENT_PROPERTY_NAMES[name] then
+			return appendContent(lines, level, name, value)
+		else
+			appendSimpleXml(lines, level, "string", name, value)
+		end
 	elseif valueType == "number" then
 		appendSimpleXml(lines, level, "float", name, formatNumber(value))
 	elseif valueType == "boolean" then
@@ -1951,7 +2073,7 @@ local function appendProperty(lines, level, name, value, references)
 	elseif valueType == "Font" then
 		appendSimpleXml(lines, level, "Font", name, tostring(value))
 	elseif valueType == "Content" then
-		appendSimpleXml(lines, level, "Content", name, tostring(value))
+		return appendContent(lines, level, name, value)
 	elseif valueType == "SecurityCapabilities" then
 		appendSimpleXml(lines, level, "SecurityCapabilities", name, tostring(value))
 	elseif valueType == "Instance" then
@@ -1967,6 +2089,14 @@ local function appendPropertyName(list, seen, propertyName)
 	if not seen[propertyName] then
 		seen[propertyName] = true
 		table.insert(list, propertyName)
+	end
+end
+
+local function markWrittenProperty(writtenProperties, propertyName)
+	writtenProperties[propertyName] = true
+
+	for _, alias in ipairs(PROPERTY_ALIASES[propertyName] or {}) do
+		writtenProperties[alias] = true
 	end
 end
 
@@ -2345,37 +2475,82 @@ local function appendHiddenBinaryProperty(lines, level, instance, propertyName, 
 	return okWrite
 end
 
+local function appendHiddenContentProperty(lines, level, instance, propertyName, errors)
+	local gethiddenproperty = getHiddenPropertyReader()
+
+	if not gethiddenproperty then
+		appendUniqueError(errors, "executor does not provide gethiddenproperty")
+		return false
+	end
+
+	local okRead, value = pcall(gethiddenproperty, instance, propertyName)
+
+	if not okRead then
+		return false
+	end
+
+	if typeof(value) == "Content" or type(value) == "string" then
+		return appendContent(lines, level, propertyName, value)
+	end
+
+	return false
+end
+
 local HIDDEN_MESH_BINARY_PROPERTIES = {
 	MeshPart = {
 		"MeshData",
 		"PhysicsData",
+		"SerializedMeshData",
+		"TriangleMeshData",
 	},
 
 	UnionOperation = {
-		"AssetId",
 		"ChildData",
-		"FormFactor",
-		"InitialSize",
 		"MeshData",
 		"PhysicsData",
+		"SerializedMeshData",
+		"TriangleMeshData",
 	},
 
 	NegateOperation = {
-		"AssetId",
 		"ChildData",
-		"FormFactor",
-		"InitialSize",
 		"MeshData",
 		"PhysicsData",
+		"SerializedMeshData",
+		"TriangleMeshData",
 	},
 
 	PartOperation = {
-		"AssetId",
 		"ChildData",
-		"FormFactor",
-		"InitialSize",
 		"MeshData",
 		"PhysicsData",
+		"SerializedMeshData",
+		"TriangleMeshData",
+	},
+}
+
+local HIDDEN_MESH_CONTENT_PROPERTIES = {
+	MeshPart = {
+		"MeshId",
+		"MeshID",
+		"MeshContent",
+		"TextureID",
+		"TextureId",
+		"TextureContent",
+	},
+
+	SpecialMesh = {
+		"MeshId",
+		"MeshID",
+		"TextureId",
+		"TextureID",
+	},
+
+	FileMesh = {
+		"MeshId",
+		"MeshID",
+		"TextureId",
+		"TextureID",
 	},
 }
 
@@ -2499,10 +2674,12 @@ end
 
 local function appendProperties(lines, level, instance, references, options)
 	table.insert(lines, string.format("%s<Properties>", indent(level)))
+	local writtenProperties = {}
 
 	for _, propertyName in ipairs(getPropertiesFor(instance, options)) do
 		if isScriptClass(instance.ClassName) and propertyName == "Source" then
 			appendSimpleXml(lines, level + 1, "ProtectedString", "Source", decompileScriptSource(instance, options))
+			markWrittenProperty(writtenProperties, propertyName)
 			recordDiagnostic(options, "written")
 		else
 			local ok, value = pcall(function()
@@ -2513,6 +2690,7 @@ local function appendProperties(lines, level, instance, references, options)
 				local wrote = appendProperty(lines, level + 1, propertyName, value, references)
 
 				if wrote then
+					markWrittenProperty(writtenProperties, propertyName)
 					recordDiagnostic(options, "written")
 				else
 					recordDiagnostic(options, "ignored")
@@ -2540,6 +2718,17 @@ local function appendProperties(lines, level, instance, references, options)
 	if options.SaveHiddenProperties and hiddenMeshProperties then
 		for _, propertyName in ipairs(hiddenMeshProperties) do
 			appendHiddenBinaryProperty(lines, level + 1, instance, propertyName, options._HiddenErrors, options)
+		end
+	end
+
+	local hiddenMeshContentProperties = HIDDEN_MESH_CONTENT_PROPERTIES[instance.ClassName]
+
+	if options.SaveHiddenProperties and hiddenMeshContentProperties then
+		for _, propertyName in ipairs(hiddenMeshContentProperties) do
+			if not writtenProperties[propertyName] and appendHiddenContentProperty(lines, level + 1, instance, propertyName, options._HiddenErrors) then
+				markWrittenProperty(writtenProperties, propertyName)
+				recordDiagnostic(options, "written")
+			end
 		end
 	end
 
@@ -2942,7 +3131,13 @@ local function getStatusFromResponse(response)
 end
 
 local function extractAssetId(value)
-	if type(value) ~= "string" or value == "" then
+	if value == nil then
+		return nil
+	end
+
+	value = tostring(value)
+
+	if value == "" then
 		return nil
 	end
 
