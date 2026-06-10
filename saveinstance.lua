@@ -19,6 +19,8 @@
 	This can decompile scripts through ByteFall or a system decompiler when
 	enabled. It does not use nil-instance tricks. Terrain can be embedded with
 	executor gethiddenproperty grids encoded as base64 BinaryString properties.
+	It can also use the public Roblox API dump for extra properties and optional
+	SharedStrings for large binary blobs.
 ]]
 
 local SaveInstance = {}
@@ -36,6 +38,12 @@ local DEFAULT_OPTIONS = {
 	FallbackToSystemDecompiler = true,
 	DecompilerTimeout = 30,
 	RobloxLikeReferents = true,
+	UseApiDump = true,
+	ApiDumpUrl = "https://raw.githubusercontent.com/MaximumADHD/Roblox-Client-Tracker/roblox/API-Dump.json",
+	SaveInternalIds = false,
+	UseSharedStrings = false,
+	SharedStringMinBytes = 4096,
+	Diagnostics = true,
 	ShowStatus = false,
 	ShowReadMe = false,
 	IgnoreDefaultProperties = false,
@@ -990,6 +998,12 @@ local function copyDefaults()
 		FallbackToSystemDecompiler = DEFAULT_OPTIONS.FallbackToSystemDecompiler,
 		DecompilerTimeout = DEFAULT_OPTIONS.DecompilerTimeout,
 		RobloxLikeReferents = DEFAULT_OPTIONS.RobloxLikeReferents,
+		UseApiDump = DEFAULT_OPTIONS.UseApiDump,
+		ApiDumpUrl = DEFAULT_OPTIONS.ApiDumpUrl,
+		SaveInternalIds = DEFAULT_OPTIONS.SaveInternalIds,
+		UseSharedStrings = DEFAULT_OPTIONS.UseSharedStrings,
+		SharedStringMinBytes = DEFAULT_OPTIONS.SharedStringMinBytes,
+		Diagnostics = DEFAULT_OPTIONS.Diagnostics,
 		ShowStatus = DEFAULT_OPTIONS.ShowStatus,
 		ShowReadMe = DEFAULT_OPTIONS.ShowReadMe,
 		IgnoreDefaultProperties = DEFAULT_OPTIONS.IgnoreDefaultProperties,
@@ -1071,6 +1085,30 @@ local function mergeOptions(userOptions)
 
 	if userOptions.RobloxLikeReferents ~= nil then
 		options.RobloxLikeReferents = userOptions.RobloxLikeReferents == true
+	end
+
+	if userOptions.UseApiDump ~= nil then
+		options.UseApiDump = userOptions.UseApiDump == true
+	end
+
+	if type(userOptions.ApiDumpUrl) == "string" and userOptions.ApiDumpUrl ~= "" then
+		options.ApiDumpUrl = userOptions.ApiDumpUrl
+	end
+
+	if userOptions.SaveInternalIds ~= nil then
+		options.SaveInternalIds = userOptions.SaveInternalIds == true
+	end
+
+	if userOptions.UseSharedStrings ~= nil then
+		options.UseSharedStrings = userOptions.UseSharedStrings == true
+	end
+
+	if type(userOptions.SharedStringMinBytes) == "number" and userOptions.SharedStringMinBytes > 0 then
+		options.SharedStringMinBytes = math.floor(userOptions.SharedStringMinBytes)
+	end
+
+	if userOptions.Diagnostics ~= nil then
+		options.Diagnostics = userOptions.Diagnostics == true
 	end
 
 	if userOptions.ShowStatus ~= nil then
@@ -1279,6 +1317,209 @@ local function getTypeName(value)
 	return valueType
 end
 
+local recordDiagnostic
+local API_DUMP_CACHE = nil
+
+local INTERNAL_PROPERTY_NAMES = {
+	HistoryId = true,
+	UniqueId = true,
+	SourceAssetId = true,
+	RobloxLocked = true,
+}
+
+local function isUnsafeApiProperty(member)
+	if type(member) ~= "table" or member.MemberType ~= "Property" then
+		return true
+	end
+
+	if type(member.Name) ~= "string" or member.Name == "Source" then
+		return true
+	end
+
+	local tags = member.Tags
+
+	if type(tags) == "table" then
+		for _, tag in ipairs(tags) do
+			if tag == "Hidden" or tag == "Deprecated" or tag == "NotScriptable" or tag == "ReadOnly" then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+local function getHttpService()
+	local ok, service = pcall(function()
+		return game:GetService("HttpService")
+	end)
+
+	if ok then
+		return service
+	end
+
+	return nil
+end
+
+local function fetchUrl(url)
+	local request = getCallableGlobal("request") or getCallableGlobal("http_request") or getCallableGlobal("httpRequest")
+
+	if not request then
+		local okSyn, synTable = pcall(function()
+			return syn
+		end)
+
+		if okSyn and type(synTable) == "table" and type(synTable.request) == "function" then
+			request = synTable.request
+		end
+	end
+
+	if not request then
+		local okFluxus, fluxusTable = pcall(function()
+			return fluxus
+		end)
+
+		if okFluxus and type(fluxusTable) == "table" and type(fluxusTable.request) == "function" then
+			request = fluxusTable.request
+		end
+	end
+
+	if not request then
+		local okHttp, httpTable = pcall(function()
+			return http
+		end)
+
+		if okHttp and type(httpTable) == "table" and type(httpTable.request) == "function" then
+			request = httpTable.request
+		end
+	end
+
+	if request then
+		local ok, response = pcall(request, {
+			Url = url,
+			Method = "GET",
+		})
+
+		if ok then
+			if type(response) == "string" then
+				return response
+			end
+
+			if type(response) == "table" then
+				local status = response.StatusCode or response.Status or response.status_code or response.status
+
+				if type(status) == "number" and (status < 200 or status >= 300) then
+					return nil, "HTTP " .. tostring(status)
+				end
+
+				return response.Body or response.body or response.Data or response.data
+			end
+		end
+
+		return nil, tostring(response)
+	end
+
+	local ok, body = pcall(function()
+		return game:HttpGet(url, true)
+	end)
+
+	if ok and type(body) == "string" then
+		return body
+	end
+
+	return nil, tostring(body)
+end
+
+local function loadApiDump(options)
+	if not options.UseApiDump then
+		return nil
+	end
+
+	if API_DUMP_CACHE then
+		if options.Diagnostics and options._Diagnostics then
+			local classCount = 0
+			local propertyCount = 0
+
+			for _, classInfo in pairs(API_DUMP_CACHE) do
+				classCount += 1
+				propertyCount += #(classInfo.Properties or {})
+			end
+
+			options._Diagnostics.ApiDump.Enabled = true
+			options._Diagnostics.ApiDump.Loaded = true
+			options._Diagnostics.ApiDump.Error = nil
+			options._Diagnostics.ApiDump.ClassCount = classCount
+			options._Diagnostics.ApiDump.PropertyCount = propertyCount
+		end
+
+		return API_DUMP_CACHE
+	end
+
+	local body, fetchErr = fetchUrl(options.ApiDumpUrl)
+
+	if not body then
+		recordDiagnostic(options, "api_error", fetchErr)
+		return nil
+	end
+
+	local httpService = getHttpService()
+
+	if not httpService then
+		recordDiagnostic(options, "api_error", "HttpService is unavailable")
+		return nil
+	end
+
+	local okDecode, decoded = pcall(function()
+		return httpService:JSONDecode(body)
+	end)
+
+	if not okDecode or type(decoded) ~= "table" or type(decoded.Classes) ~= "table" then
+		recordDiagnostic(options, "api_error", okDecode and "invalid API dump shape" or decoded)
+		return nil
+	end
+
+	local classCache = {}
+	local classCount = 0
+	local propertyCount = 0
+
+	for _, class in ipairs(decoded.Classes) do
+		if type(class) == "table" and type(class.Name) == "string" then
+			classCount += 1
+			local properties = {}
+
+			for _, member in ipairs(class.Members or {}) do
+				if not isUnsafeApiProperty(member) then
+					table.insert(properties, member.Name)
+					propertyCount += 1
+				end
+			end
+
+			classCache[class.Name] = {
+				Superclass = class.Superclass,
+				Properties = properties,
+			}
+		end
+	end
+
+	API_DUMP_CACHE = classCache
+
+	if options.Diagnostics then
+		options._Diagnostics = options._Diagnostics or {
+			ApiDump = {},
+			PropertiesWritten = 0,
+			PropertiesIgnored = 0,
+			Errors = {},
+		}
+		options._Diagnostics.ApiDump.Enabled = true
+		options._Diagnostics.ApiDump.Loaded = true
+		options._Diagnostics.ApiDump.Error = nil
+		options._Diagnostics.ApiDump.ClassCount = classCount
+		options._Diagnostics.ApiDump.PropertyCount = propertyCount
+	end
+
+	return classCache
+end
+
 local function formatNumber(value)
 	if value ~= value then
 		return "0"
@@ -1306,11 +1547,36 @@ local function appendSimpleXml(lines, level, tagName, name, value)
 	))
 end
 
-local function appendBinaryString(lines, level, name, value)
+local function getSharedStringId(options, encodedValue)
+	options._SharedStrings = options._SharedStrings or {}
+	options._SharedStringOrder = options._SharedStringOrder or {}
+
+	local existing = options._SharedStrings[encodedValue]
+
+	if existing then
+		return existing
+	end
+
+	local id = encodeBase64("DE_SHARED_" .. tostring(#options._SharedStringOrder + 1))
+	options._SharedStrings[encodedValue] = id
+	table.insert(options._SharedStringOrder, {
+		Id = id,
+		Value = encodedValue,
+	})
+
+	return id
+end
+
+local function appendBinaryString(lines, level, name, value, options)
 	local encoded, err = encodeBase64(value)
 
 	if not encoded then
 		return false, err
+	end
+
+	if options and options.UseSharedStrings and #value >= options.SharedStringMinBytes then
+		appendSimpleXml(lines, level, "SharedString", name, getSharedStringId(options, encoded))
+		return true
 	end
 
 	appendSimpleXml(lines, level, "BinaryString", name, encoded)
@@ -1472,6 +1738,42 @@ local function appendVector3(lines, level, tagName, name, value)
 	table.insert(lines, string.format("%s</%s>", indent(level), tagName))
 end
 
+local function appendRect(lines, level, name, value)
+	table.insert(lines, string.format("%s<Rect name=\"%s\">", indent(level), xmlEscape(name)))
+	appendVector2(lines, level + 1, "min", "Min", value.Min)
+	appendVector2(lines, level + 1, "max", "Max", value.Max)
+	table.insert(lines, string.format("%s</Rect>", indent(level)))
+end
+
+local function appendRay(lines, level, name, value)
+	table.insert(lines, string.format("%s<Ray name=\"%s\">", indent(level), xmlEscape(name)))
+	appendVector3(lines, level + 1, "origin", "Origin", value.Origin)
+	appendVector3(lines, level + 1, "direction", "Direction", value.Direction)
+	table.insert(lines, string.format("%s</Ray>", indent(level)))
+end
+
+local function appendFaces(lines, level, name, value)
+	table.insert(lines, string.format("%s<Faces name=\"%s\">", indent(level), xmlEscape(name)))
+	for _, face in ipairs({ "Top", "Bottom", "Left", "Right", "Front", "Back" }) do
+		local ok, enabled = pcall(function()
+			return value[face]
+		end)
+		table.insert(lines, string.format("%s<%s>%s</%s>", indent(level + 1), face, ok and enabled and "true" or "false", face))
+	end
+	table.insert(lines, string.format("%s</Faces>", indent(level)))
+end
+
+local function appendAxes(lines, level, name, value)
+	table.insert(lines, string.format("%s<Axes name=\"%s\">", indent(level), xmlEscape(name)))
+	for _, axis in ipairs({ "X", "Y", "Z" }) do
+		local ok, enabled = pcall(function()
+			return value[axis]
+		end)
+		table.insert(lines, string.format("%s<%s>%s</%s>", indent(level + 1), axis, ok and enabled and "true" or "false", axis))
+	end
+	table.insert(lines, string.format("%s</Axes>", indent(level)))
+end
+
 local function appendColor3(lines, level, name, value)
 	table.insert(lines, string.format("%s<Color3 name=\"%s\">", indent(level), xmlEscape(name)))
 	table.insert(lines, string.format("%s<R>%s</R>", indent(level + 1), formatNumber(value.R)))
@@ -1614,12 +1916,24 @@ local function appendProperty(lines, level, name, value, references)
 		appendVector2(lines, level, "Vector2", name, value)
 	elseif valueType == "Vector3" then
 		appendVector3(lines, level, "Vector3", name, value)
+	elseif valueType == "Vector2int16" then
+		appendVector2(lines, level, "Vector2int16", name, value)
+	elseif valueType == "Vector3int16" then
+		appendVector3(lines, level, "Vector3int16", name, value)
 	elseif valueType == "Color3" then
 		appendColor3(lines, level, name, value)
 	elseif valueType == "BrickColor" then
 		appendBrickColor(lines, level, name, value)
 	elseif valueType == "CFrame" then
 		appendCFrame(lines, level, name, value)
+	elseif valueType == "Rect" then
+		appendRect(lines, level, name, value)
+	elseif valueType == "Ray" then
+		appendRay(lines, level, name, value)
+	elseif valueType == "Faces" then
+		appendFaces(lines, level, name, value)
+	elseif valueType == "Axes" then
+		appendAxes(lines, level, name, value)
 	elseif valueType == "UDim" then
 		appendUDim(lines, level, name, value)
 	elseif valueType == "UDim2" then
@@ -1634,6 +1948,12 @@ local function appendProperty(lines, level, name, value, references)
 		appendColorSequence(lines, level, name, value)
 	elseif valueType == "PhysicalProperties" then
 		appendPhysicalProperties(lines, level, name, value)
+	elseif valueType == "Font" then
+		appendSimpleXml(lines, level, "Font", name, tostring(value))
+	elseif valueType == "Content" then
+		appendSimpleXml(lines, level, "Content", name, tostring(value))
+	elseif valueType == "SecurityCapabilities" then
+		appendSimpleXml(lines, level, "SecurityCapabilities", name, tostring(value))
 	elseif valueType == "Instance" then
 		return appendRef(lines, level, name, value, references)
 	else
@@ -1658,6 +1978,43 @@ local function report(options, message, progress)
 	if options.ShowStatus then
 		local suffix = type(progress) == "number" and (" " .. tostring(math.floor(progress * 100)) .. "%") or ""
 		warn("[D.E save] " .. tostring(message) .. suffix)
+	end
+end
+
+recordDiagnostic = function(options, bucket, message)
+	if not options.Diagnostics then
+		return
+	end
+
+	options._Diagnostics = options._Diagnostics or {
+		ApiDump = {
+			Enabled = options.UseApiDump == true,
+			Loaded = false,
+			Error = nil,
+			ClassCount = 0,
+			PropertyCount = 0,
+		},
+		PropertiesWritten = 0,
+		PropertiesIgnored = 0,
+		Errors = {},
+	}
+
+	if bucket == "error" then
+		local text = tostring(message)
+
+		for _, existing in ipairs(options._Diagnostics.Errors) do
+			if existing == text then
+				return
+			end
+		end
+
+		table.insert(options._Diagnostics.Errors, text)
+	elseif bucket == "written" then
+		options._Diagnostics.PropertiesWritten += 1
+	elseif bucket == "ignored" then
+		options._Diagnostics.PropertiesIgnored += 1
+	elseif bucket == "api_error" then
+		options._Diagnostics.ApiDump.Error = tostring(message)
 	end
 end
 
@@ -1956,7 +2313,7 @@ local function decompileScriptSource(scriptInstance, options)
 	return "-- D.E save decompiler disabled or unavailable"
 end
 
-local function appendHiddenBinaryProperty(lines, level, instance, propertyName, errors)
+local function appendHiddenBinaryProperty(lines, level, instance, propertyName, errors, options)
 	local gethiddenproperty = getHiddenPropertyReader()
 
 	if not gethiddenproperty then
@@ -1979,7 +2336,7 @@ local function appendHiddenBinaryProperty(lines, level, instance, propertyName, 
 		return false
 	end
 
-	local okWrite, writeErr = appendBinaryString(lines, level, propertyName, value)
+	local okWrite, writeErr = appendBinaryString(lines, level, propertyName, value, options)
 
 	if not okWrite then
 		appendUniqueError(errors, propertyName .. ": " .. tostring(writeErr))
@@ -2022,7 +2379,29 @@ local HIDDEN_MESH_BINARY_PROPERTIES = {
 	},
 }
 
-local function getPropertiesFor(instance)
+local function appendApiDumpProperties(list, seen, className, classCache, options)
+	local visited = {}
+	local current = className
+
+	while current and not visited[current] do
+		visited[current] = true
+		local classInfo = classCache[current]
+
+		if not classInfo then
+			break
+		end
+
+		for _, propertyName in ipairs(classInfo.Properties or {}) do
+			if options.SaveInternalIds or not INTERNAL_PROPERTY_NAMES[propertyName] then
+				appendPropertyName(list, seen, propertyName)
+			end
+		end
+
+		current = classInfo.Superclass
+	end
+end
+
+local function getPropertiesFor(instance, options)
 	local properties = {}
 	local seen = {}
 
@@ -2046,6 +2425,10 @@ local function getPropertiesFor(instance)
 		for _, propertyName in ipairs(classProperties) do
 			appendPropertyName(properties, seen, propertyName)
 		end
+	end
+
+	if options and options._ApiDumpClassCache then
+		appendApiDumpProperties(properties, seen, instance.ClassName, options._ApiDumpClassCache, options)
 	end
 
 	return properties
@@ -2117,16 +2500,27 @@ end
 local function appendProperties(lines, level, instance, references, options)
 	table.insert(lines, string.format("%s<Properties>", indent(level)))
 
-	for _, propertyName in ipairs(getPropertiesFor(instance)) do
+	for _, propertyName in ipairs(getPropertiesFor(instance, options)) do
 		if isScriptClass(instance.ClassName) and propertyName == "Source" then
 			appendSimpleXml(lines, level + 1, "ProtectedString", "Source", decompileScriptSource(instance, options))
+			recordDiagnostic(options, "written")
 		else
 			local ok, value = pcall(function()
 				return instance[propertyName]
 			end)
 
 			if ok and (not options.IgnoreDefaultProperties or not isDefaultProperty(instance, propertyName, value)) then
-				appendProperty(lines, level + 1, propertyName, value, references)
+				local wrote = appendProperty(lines, level + 1, propertyName, value, references)
+
+				if wrote then
+					recordDiagnostic(options, "written")
+				else
+					recordDiagnostic(options, "ignored")
+				end
+			elseif not ok then
+				recordDiagnostic(options, "ignored")
+			else
+				recordDiagnostic(options, "ignored")
 			end
 		end
 	end
@@ -2137,15 +2531,15 @@ local function appendProperties(lines, level, instance, references, options)
 	if options.SaveTerrain and options.SaveHiddenProperties and instance:IsA("Terrain") then
 		local terrainErrors = options._TerrainErrors
 
-		appendHiddenBinaryProperty(lines, level + 1, instance, "SmoothGrid", terrainErrors)
-		appendHiddenBinaryProperty(lines, level + 1, instance, "PhysicsGrid", terrainErrors)
+		appendHiddenBinaryProperty(lines, level + 1, instance, "SmoothGrid", terrainErrors, options)
+		appendHiddenBinaryProperty(lines, level + 1, instance, "PhysicsGrid", terrainErrors, options)
 	end
 
 	local hiddenMeshProperties = HIDDEN_MESH_BINARY_PROPERTIES[instance.ClassName]
 
 	if options.SaveHiddenProperties and hiddenMeshProperties then
 		for _, propertyName in ipairs(hiddenMeshProperties) do
-			appendHiddenBinaryProperty(lines, level + 1, instance, propertyName, options._HiddenErrors)
+			appendHiddenBinaryProperty(lines, level + 1, instance, propertyName, options._HiddenErrors, options)
 		end
 	end
 
@@ -2197,12 +2591,50 @@ local function getRobloxVersion()
 	return "UNKNOWN"
 end
 
+local function getExecutorName()
+	local identify = getCallableGlobal("identifyexecutor")
+		or getCallableGlobal("getexecutorname")
+		or getCallableGlobal("whatexecutor")
+
+	if identify then
+		local ok, name, versionText = pcall(identify)
+
+		if ok and name then
+			if versionText then
+				return tostring(name) .. " " .. tostring(versionText)
+			end
+
+			return tostring(name)
+		end
+	end
+
+	return "UNKNOWN"
+end
+
+local function getGameField(name)
+	local ok, value = pcall(function()
+		return game[name]
+	end)
+
+	if ok and value ~= nil then
+		return tostring(value)
+	end
+
+	return "UNKNOWN"
+end
+
 local function appendMetadata(lines, root, options, instanceCount)
 	table.insert(lines, string.format("\t<Meta name=\"D.E save Root\">%s</Meta>", xmlEscape(root:GetFullName())))
 	table.insert(lines, string.format("\t<Meta name=\"D.E save InstanceCount\">%s</Meta>", tostring(instanceCount)))
 	table.insert(lines, string.format("\t<Meta name=\"D.E save GeneratedAtUnix\">%s</Meta>", tostring(os.time())))
 	table.insert(lines, string.format("\t<Meta name=\"D.E save RobloxVersion\">%s</Meta>", xmlEscape(getRobloxVersion())))
+	table.insert(lines, string.format("\t<Meta name=\"D.E save Executor\">%s</Meta>", xmlEscape(getExecutorName())))
+	table.insert(lines, string.format("\t<Meta name=\"D.E save PlaceId\">%s</Meta>", xmlEscape(getGameField("PlaceId"))))
+	table.insert(lines, string.format("\t<Meta name=\"D.E save PlaceVersion\">%s</Meta>", xmlEscape(getGameField("PlaceVersion"))))
 	table.insert(lines, string.format("\t<Meta name=\"D.E save IgnoreDefaultProperties\">%s</Meta>", options.IgnoreDefaultProperties and "true" or "false"))
+	table.insert(lines, string.format("\t<Meta name=\"D.E save UseApiDump\">%s</Meta>", options.UseApiDump and "true" or "false"))
+	table.insert(lines, string.format("\t<Meta name=\"D.E save UseSharedStrings\">%s</Meta>", options.UseSharedStrings and "true" or "false"))
+	table.insert(lines, string.format("\t<Meta name=\"D.E save DecompileScripts\">%s</Meta>", options.DecompileScripts and "true" or "false"))
 end
 
 local function appendReadMe(lines, level, options, references)
@@ -2229,8 +2661,41 @@ local function appendReadMe(lines, level, options, references)
 	table.insert(lines, string.format("%s</Item>", indent(level)))
 end
 
+local function appendSharedStrings(lines, options)
+	if not options.UseSharedStrings or not options._SharedStringOrder or #options._SharedStringOrder == 0 then
+		return
+	end
+
+	table.insert(lines, "\t<SharedStrings>")
+
+	for _, sharedString in ipairs(options._SharedStringOrder) do
+		table.insert(lines, string.format(
+			"\t\t<SharedString md5=\"%s\">%s</SharedString>",
+			xmlEscape(sharedString.Id),
+			xmlEscape(sharedString.Value)
+		))
+	end
+
+	table.insert(lines, "\t</SharedStrings>")
+end
+
 local function buildDocument(root, options)
 	local instances = {}
+	options._Diagnostics = options.Diagnostics and {
+		ApiDump = {
+			Enabled = options.UseApiDump == true,
+			Loaded = false,
+			Error = nil,
+			ClassCount = 0,
+			PropertyCount = 0,
+		},
+		PropertiesWritten = 0,
+		PropertiesIgnored = 0,
+		Errors = {},
+	} or nil
+	options._ApiDumpClassCache = loadApiDump(options)
+	options._SharedStrings = nil
+	options._SharedStringOrder = nil
 	options._TerrainErrors = {}
 	options._HiddenErrors = {}
 	options._DecompilerErrors = {}
@@ -2267,6 +2732,10 @@ local function buildDocument(root, options)
 		table.insert(options._TerrainErrors, "SaveHiddenProperties must be enabled to embed SmoothGrid and PhysicsGrid")
 	end
 
+	appendSharedStrings(lines, options)
+	if options._Diagnostics then
+		options._Diagnostics.SharedStrings = options._SharedStringOrder and #options._SharedStringOrder or 0
+	end
 	table.insert(lines, "</roblox><!-- Saved by D.E save -->")
 	report(options, "XML ready", 0.75)
 
@@ -2284,11 +2753,16 @@ local function buildDocument(root, options)
 		UseByteFall = options.UseByteFallDecompiler == true,
 		Errors = options._DecompilerErrors,
 	}
+	local diagnostics = options._Diagnostics
 	options._TerrainErrors = nil
 	options._HiddenErrors = nil
 	options._DecompilerErrors = nil
+	options._ApiDumpClassCache = nil
+	options._SharedStrings = nil
+	options._SharedStringOrder = nil
+	options._Diagnostics = nil
 
-	return table.concat(lines, "\n"), terrainResult, hiddenResult, decompilerResult
+	return table.concat(lines, "\n"), terrainResult, hiddenResult, decompilerResult, diagnostics
 end
 
 local function getExecutorEnvironment()
@@ -2491,7 +2965,7 @@ local function collectAssetReferences(root, options)
 	collectInstances(root, options, instances, true)
 
 	for _, instance in ipairs(instances) do
-		for _, propertyName in ipairs(getPropertiesFor(instance)) do
+		for _, propertyName in ipairs(getPropertiesFor(instance, options)) do
 			if ASSET_PROPERTY_NAMES[propertyName] then
 				local ok, value = pcall(function()
 					return instance[propertyName]
@@ -2651,7 +3125,7 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		options.AssetsFolder = normalizePath(folder .. "/" .. DEFAULT_OPTIONS.AssetsFolder)
 	end
 
-	local xml, terrainResult, hiddenResult, decompilerResult = buildDocument(root, options)
+	local xml, terrainResult, hiddenResult, decompilerResult, diagnostics = buildDocument(root, options)
 	local okWrite, writeErr = writeFileSegmented(normalizedPath, xml, options)
 
 	if not okWrite then
@@ -2695,6 +3169,7 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		Terrain = terrainResult,
 		HiddenProperties = hiddenResult,
 		Decompiler = decompilerResult,
+		Diagnostics = diagnostics,
 		Errors = errors,
 	}
 end
