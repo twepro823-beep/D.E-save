@@ -16,15 +16,15 @@
 	SaveToFile(root, path, options) uses executor APIs such as writefile,
 	appendfile, makefolder/isfolder, and request/http_request.
 
-	This does not decompile scripts, read bytecode, embed TerrainRegion binary
-	data, or use nil-instance tricks. Terrain can be exported with executor
-	gethiddenproperty grids or as chunked JSON voxels.
+	This does not decompile scripts, read bytecode, or use nil-instance tricks.
+	Terrain can be embedded with executor gethiddenproperty grids encoded as
+	base64 BinaryString properties.
 ]]
 
 local SaveInstance = {}
 
 local DEFAULT_OPTIONS = {
-	IncludeScripts = false,
+	IncludeScripts = true,
 	SaveAssets = false,
 	SaveTerrain = false,
 	ShowReadMe = false,
@@ -32,11 +32,6 @@ local DEFAULT_OPTIONS = {
 	AlternativeWritefile = true,
 	WriteSegmentSize = 4 * 1024 * 1024,
 	AssetsFolder = "saveinstance_assets",
-	TerrainFolder = "saveinstance_terrain",
-	TerrainSaveMode = "Auto",
-	TerrainResolution = 4,
-	TerrainChunkSize = 64,
-	TerrainRegion = nil,
 	RequestTimeout = 20,
 	Callback = nil,
 	IgnoreClasses = {},
@@ -87,10 +82,30 @@ local CLASS_PROPERTIES = {
 		"TextureID",
 		"RenderFidelity",
 		"CollisionFidelity",
+		"DoubleSided",
+		"HasJointOffset",
+		"JointOffset",
 	},
 
 	UnionOperation = {
 		"UsePartColor",
+		"RenderFidelity",
+		"CollisionFidelity",
+		"SmoothingAngle",
+	},
+
+	NegateOperation = {
+		"UsePartColor",
+		"RenderFidelity",
+		"CollisionFidelity",
+		"SmoothingAngle",
+	},
+
+	PartOperation = {
+		"UsePartColor",
+		"RenderFidelity",
+		"CollisionFidelity",
+		"SmoothingAngle",
 	},
 
 	TrussPart = {
@@ -143,6 +158,14 @@ local CLASS_PROPERTIES = {
 		"MeshId",
 		"TextureId",
 		"MeshType",
+		"Scale",
+		"Offset",
+		"VertexColor",
+	},
+
+	FileMesh = {
+		"MeshId",
+		"TextureId",
 		"Scale",
 		"Offset",
 		"VertexColor",
@@ -338,6 +361,20 @@ local CLASS_PROPERTIES = {
 		"Enabled",
 		"SparkleColor",
 	},
+
+	Script = {
+		"Disabled",
+		"Source",
+	},
+
+	LocalScript = {
+		"Disabled",
+		"Source",
+	},
+
+	ModuleScript = {
+		"Source",
+	},
 }
 
 local BASEPART_PROPERTIES = {
@@ -389,11 +426,6 @@ local function copyDefaults()
 		AlternativeWritefile = DEFAULT_OPTIONS.AlternativeWritefile,
 		WriteSegmentSize = DEFAULT_OPTIONS.WriteSegmentSize,
 		AssetsFolder = DEFAULT_OPTIONS.AssetsFolder,
-		TerrainFolder = DEFAULT_OPTIONS.TerrainFolder,
-		TerrainSaveMode = DEFAULT_OPTIONS.TerrainSaveMode,
-		TerrainResolution = DEFAULT_OPTIONS.TerrainResolution,
-		TerrainChunkSize = DEFAULT_OPTIONS.TerrainChunkSize,
-		TerrainRegion = DEFAULT_OPTIONS.TerrainRegion,
 		RequestTimeout = DEFAULT_OPTIONS.RequestTimeout,
 		Callback = DEFAULT_OPTIONS.Callback,
 		IgnoreClasses = {},
@@ -455,30 +487,6 @@ local function mergeOptions(userOptions)
 		options.AssetsFolder = userOptions.AssetsFolder
 	end
 
-	if type(userOptions.TerrainFolder) == "string" and userOptions.TerrainFolder ~= "" then
-		options.TerrainFolder = userOptions.TerrainFolder
-	end
-
-	if type(userOptions.TerrainSaveMode) == "string" then
-		local mode = userOptions.TerrainSaveMode
-
-		if mode == "Auto" or mode == "HiddenGrids" or mode == "Voxels" then
-			options.TerrainSaveMode = mode
-		end
-	end
-
-	if type(userOptions.TerrainResolution) == "number" and userOptions.TerrainResolution > 0 then
-		options.TerrainResolution = math.floor(userOptions.TerrainResolution)
-	end
-
-	if type(userOptions.TerrainChunkSize) == "number" and userOptions.TerrainChunkSize > 0 then
-		options.TerrainChunkSize = math.floor(userOptions.TerrainChunkSize)
-	end
-
-	if typeof(userOptions.TerrainRegion) == "Region3" then
-		options.TerrainRegion = userOptions.TerrainRegion
-	end
-
 	if type(userOptions.RequestTimeout) == "number" and userOptions.RequestTimeout > 0 then
 		options.RequestTimeout = userOptions.RequestTimeout
 	end
@@ -524,6 +532,115 @@ local function xmlEscape(value)
 	value = value:gsub("\"", "&quot;")
 	value = value:gsub("'", "&apos;")
 	return value
+end
+
+local function getCallableGlobal(name)
+	local okEnv, env = pcall(function()
+		if getgenv then
+			return getgenv()
+		end
+
+		if getfenv then
+			return getfenv(0)
+		end
+
+		return _G
+	end)
+
+	if okEnv and type(env) == "table" and type(env[name]) == "function" then
+		return env[name]
+	end
+
+	local value = rawget(_G, name)
+
+	if type(value) == "function" then
+		return value
+	end
+
+	return nil
+end
+
+local function base64EncodeFallback(data)
+	local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	local output = {}
+
+	for index = 1, #data, 3 do
+		local byte1 = string.byte(data, index) or 0
+		local byte2 = string.byte(data, index + 1) or 0
+		local byte3 = string.byte(data, index + 2) or 0
+		local combined = byte1 * 65536 + byte2 * 256 + byte3
+		local char1 = math.floor(combined / 262144) % 64
+		local char2 = math.floor(combined / 4096) % 64
+		local char3 = math.floor(combined / 64) % 64
+		local char4 = combined % 64
+		local remaining = #data - index + 1
+
+		table.insert(output, string.sub(alphabet, char1 + 1, char1 + 1))
+		table.insert(output, string.sub(alphabet, char2 + 1, char2 + 1))
+		table.insert(output, remaining > 1 and string.sub(alphabet, char3 + 1, char3 + 1) or "=")
+		table.insert(output, remaining > 2 and string.sub(alphabet, char4 + 1, char4 + 1) or "=")
+	end
+
+	return table.concat(output)
+end
+
+local function encodeBase64(data)
+	if type(data) ~= "string" then
+		return nil, "expected binary string"
+	end
+
+	local base64encode = getCallableGlobal("base64encode")
+
+	if base64encode then
+		local ok, encoded = pcall(base64encode, data)
+
+		if ok and type(encoded) == "string" then
+			return encoded
+		end
+	end
+
+	local okCrypt, cryptTable = pcall(function()
+		return crypt
+	end)
+
+	if okCrypt and type(cryptTable) == "table" then
+		local encoder = cryptTable.base64encode
+
+		if type(encoder) ~= "function" and type(cryptTable.base64) == "table" then
+			encoder = cryptTable.base64.encode
+		end
+
+		if type(encoder) == "function" then
+			local ok, encoded = pcall(encoder, data)
+
+			if ok and type(encoded) == "string" then
+				return encoded
+			end
+		end
+	end
+
+	local okEncoding, encodingService = pcall(function()
+		return game:GetService("EncodingService")
+	end)
+
+	if okEncoding and encodingService then
+		local ok, encoded = pcall(function()
+			local source = buffer and buffer.fromstring and buffer.fromstring(data) or data
+			local result = encodingService:Base64Encode(source)
+
+			if typeof(result) == "buffer" and buffer and buffer.tostring then
+				return buffer.tostring(result)
+			end
+
+			return result
+		end)
+
+		if ok and type(encoded) == "string" then
+			return encoded
+		end
+	end
+
+	return base64EncodeFallback(data)
 end
 
 local function indent(level)
@@ -577,6 +694,17 @@ local function appendSimpleXml(lines, level, tagName, name, value)
 		xmlEscape(value),
 		tagName
 	))
+end
+
+local function appendBinaryString(lines, level, name, value)
+	local encoded, err = encodeBase64(value)
+
+	if not encoded then
+		return false, err
+	end
+
+	appendSimpleXml(lines, level, "BinaryString", name, encoded)
+	return true
 end
 
 local function appendVector2(lines, level, tagName, name, value)
@@ -836,6 +964,100 @@ local function isDefaultProperty(instance, propertyName, value)
 	return ok and valuesEqual(value, defaultValue)
 end
 
+local function isScriptClass(className)
+	return SKIPPED_SCRIPT_CLASSES[className] == true
+end
+
+local function getHiddenPropertyReader()
+	local direct = getCallableGlobal("gethiddenproperty") or getCallableGlobal("get_hidden_property")
+
+	if direct then
+		return direct
+	end
+
+	local okDebug, debugTable = pcall(function()
+		return debug
+	end)
+
+	if okDebug and type(debugTable) == "table" and type(debugTable.gethiddenproperty) == "function" then
+		return debugTable.gethiddenproperty
+	end
+
+	return nil
+end
+
+local function appendHiddenBinaryProperty(lines, level, instance, propertyName, errors)
+	local gethiddenproperty = getHiddenPropertyReader()
+
+	if not gethiddenproperty then
+		if errors then
+			table.insert(errors, propertyName .. ": executor does not provide gethiddenproperty")
+		end
+
+		return false
+	end
+
+	local okRead, value = pcall(gethiddenproperty, instance, propertyName)
+
+	if not okRead then
+		if errors then
+			table.insert(errors, propertyName .. ": " .. tostring(value))
+		end
+
+		return false
+	end
+
+	if type(value) ~= "string" then
+		if errors and value ~= nil then
+			table.insert(errors, propertyName .. ": expected string, got " .. typeof(value))
+		end
+
+		return false
+	end
+
+	local okWrite, writeErr = appendBinaryString(lines, level, propertyName, value)
+
+	if not okWrite and errors then
+		table.insert(errors, propertyName .. ": " .. tostring(writeErr))
+	end
+
+	return okWrite
+end
+
+local HIDDEN_MESH_BINARY_PROPERTIES = {
+	MeshPart = {
+		"MeshData",
+		"PhysicsData",
+	},
+
+	UnionOperation = {
+		"AssetId",
+		"ChildData",
+		"FormFactor",
+		"InitialSize",
+		"MeshData",
+		"PhysicsData",
+	},
+
+	NegateOperation = {
+		"AssetId",
+		"ChildData",
+		"FormFactor",
+		"InitialSize",
+		"MeshData",
+		"PhysicsData",
+	},
+
+	PartOperation = {
+		"AssetId",
+		"ChildData",
+		"FormFactor",
+		"InitialSize",
+		"MeshData",
+		"PhysicsData",
+	},
+}
+
 local function getPropertiesFor(instance)
 	local properties = {}
 	local seen = {}
@@ -915,12 +1137,31 @@ local function appendProperties(lines, level, instance, references, options)
 	table.insert(lines, string.format("%s<Properties>", indent(level)))
 
 	for _, propertyName in ipairs(getPropertiesFor(instance)) do
-		local ok, value = pcall(function()
-			return instance[propertyName]
-		end)
+		if isScriptClass(instance.ClassName) and propertyName == "Source" then
+			appendSimpleXml(lines, level + 1, "ProtectedString", "Source", "")
+		else
+			local ok, value = pcall(function()
+				return instance[propertyName]
+			end)
 
-		if ok and (not options.IgnoreDefaultProperties or not isDefaultProperty(instance, propertyName, value)) then
-			appendProperty(lines, level + 1, propertyName, value, references)
+			if ok and (not options.IgnoreDefaultProperties or not isDefaultProperty(instance, propertyName, value)) then
+				appendProperty(lines, level + 1, propertyName, value, references)
+			end
+		end
+	end
+
+	if options.SaveTerrain and instance:IsA("Terrain") then
+		local terrainErrors = options._TerrainErrors
+
+		appendHiddenBinaryProperty(lines, level + 1, instance, "SmoothGrid", terrainErrors)
+		appendHiddenBinaryProperty(lines, level + 1, instance, "PhysicsGrid", terrainErrors)
+	end
+
+	local hiddenMeshProperties = HIDDEN_MESH_BINARY_PROPERTIES[instance.ClassName]
+
+	if hiddenMeshProperties then
+		for _, propertyName in ipairs(hiddenMeshProperties) do
+			appendHiddenBinaryProperty(lines, level + 1, instance, propertyName)
 		end
 	end
 
@@ -990,7 +1231,8 @@ local function appendReadMe(lines, level, options, references)
 		"D.E save export",
 		"",
 		"This file was generated by a basic Luau RBXLX exporter.",
-		"Scripts are not decompiled and Terrain voxels are not serialized in this version.",
+		"Scripts are saved with empty Source placeholders for future decompiler support.",
+		"Terrain SmoothGrid and PhysicsGrid can be embedded as base64 BinaryString properties.",
 		"Asset properties are preserved by reference; optional asset downloads are stored beside the file.",
 	}, "\n")
 
@@ -1005,8 +1247,17 @@ end
 
 local function buildDocument(root, options)
 	local instances = {}
+	options._TerrainErrors = {}
 	report(options, "Collecting instances", 0)
 	collectInstances(root, options, instances, true)
+	local sawTerrain = false
+
+	for _, instance in ipairs(instances) do
+		if instance:IsA("Terrain") then
+			sawTerrain = true
+			break
+		end
+	end
 
 	local references = buildReferences(instances)
 	local lines = {
@@ -1020,10 +1271,21 @@ local function buildDocument(root, options)
 	appendItem(lines, 1, root, options, references)
 	appendReadMe(lines, 1, options, references)
 
+	if options.SaveTerrain and not sawTerrain then
+		table.insert(options._TerrainErrors, "terrain was not found under the selected root")
+	end
+
 	table.insert(lines, "</roblox>")
 	report(options, "XML ready", 0.75)
 
-	return table.concat(lines, "\n")
+	local terrainResult = {
+		Embedded = options.SaveTerrain == true,
+		Files = {},
+		Errors = options._TerrainErrors,
+	}
+	options._TerrainErrors = nil
+
+	return table.concat(lines, "\n"), terrainResult
 end
 
 local function getExecutorEnvironment()
@@ -1086,25 +1348,6 @@ local function getRequestFunction()
 
 	if okHttp and type(httpTable) == "table" and type(httpTable.request) == "function" then
 		return httpTable.request
-	end
-
-	return nil
-end
-
-local function getHiddenPropertyFunction()
-	local direct = getExecutorFunction("gethiddenproperty")
-		or getExecutorFunction("get_hidden_property")
-
-	if direct then
-		return direct
-	end
-
-	local okDebug, debugTable = pcall(function()
-		return debug
-	end)
-
-	if okDebug and type(debugTable) == "table" and type(debugTable.gethiddenproperty) == "function" then
-		return debugTable.gethiddenproperty
 	end
 
 	return nil
@@ -1377,385 +1620,6 @@ local function saveAssets(root, options)
 	return result
 end
 
-local function encodeJson(value)
-	local okService, httpService = pcall(function()
-		return game:GetService("HttpService")
-	end)
-
-	if not okService or not httpService then
-		return nil, "HttpService is not available"
-	end
-
-	local ok, encoded = pcall(function()
-		return httpService:JSONEncode(value)
-	end)
-
-	if not ok then
-		return nil, encoded
-	end
-
-	return encoded
-end
-
-local function findTerrain(root)
-	if root:IsA("Terrain") then
-		return root
-	end
-
-	local okWorkspaceTerrain, terrain = pcall(function()
-		return workspace.Terrain
-	end)
-
-	if okWorkspaceTerrain and terrain and (root == game or root == workspace or terrain:IsDescendantOf(root)) then
-		return terrain
-	end
-
-	local okFind, found = pcall(function()
-		return root:FindFirstChildOfClass("Terrain")
-	end)
-
-	if okFind then
-		return found
-	end
-
-	return nil
-end
-
-local function getRegionBounds(region, resolution)
-	local center = region.CFrame.Position
-	local halfSize = region.Size / 2
-	local min = center - halfSize
-	local max = center + halfSize
-
-	min = Vector3.new(
-		math.floor(min.X / resolution) * resolution,
-		math.floor(min.Y / resolution) * resolution,
-		math.floor(min.Z / resolution) * resolution
-	)
-
-	max = Vector3.new(
-		math.ceil(max.X / resolution) * resolution,
-		math.ceil(max.Y / resolution) * resolution,
-		math.ceil(max.Z / resolution) * resolution
-	)
-
-	return min, max
-end
-
-local function getTerrainRegion(terrain, options)
-	if options.TerrainRegion then
-		return options.TerrainRegion:ExpandToGrid(options.TerrainResolution)
-	end
-
-	local ok, extents = pcall(function()
-		return terrain.MaxExtents
-	end)
-
-	if not ok or not extents then
-		return nil, "TerrainRegion was not provided and Terrain.MaxExtents is unavailable"
-	end
-
-	local minCell = extents.Min
-	local maxCell = extents.Max
-
-	if not minCell or not maxCell then
-		return nil, "Terrain.MaxExtents did not provide Min/Max"
-	end
-
-	if minCell.X >= maxCell.X or minCell.Y >= maxCell.Y or minCell.Z >= maxCell.Z then
-		return nil, "terrain appears to be empty"
-	end
-
-	local resolution = options.TerrainResolution
-	local min = Vector3.new(minCell.X * resolution, minCell.Y * resolution, minCell.Z * resolution)
-	local max = Vector3.new((maxCell.X + 1) * resolution, (maxCell.Y + 1) * resolution, (maxCell.Z + 1) * resolution)
-
-	return Region3.new(min, max):ExpandToGrid(resolution)
-end
-
-local function materialName(material)
-	if typeof(material) == "EnumItem" then
-		return material.Name
-	end
-
-	return tostring(material)
-end
-
-local function saveTerrainHiddenGrids(terrain, options)
-	local result = {
-		Mode = "HiddenGrids",
-		Files = {},
-		Errors = {},
-		Folder = options.TerrainFolder,
-	}
-	local gethiddenproperty = getHiddenPropertyFunction()
-
-	if not gethiddenproperty then
-		table.insert(result.Errors, "executor does not provide gethiddenproperty")
-		return result
-	end
-
-	local properties = {
-		"SmoothGrid",
-		"PhysicsGrid",
-	}
-	local manifestLines = {
-		"Property\tPath\tBytes\tStatus\tMessage",
-	}
-
-	for _, propertyName in ipairs(properties) do
-		report(options, "Saving terrain " .. propertyName, 0.95)
-
-		local okRead, value = pcall(gethiddenproperty, terrain, propertyName)
-		local path = normalizePath(options.TerrainFolder .. "/" .. propertyName .. ".txt")
-
-		if okRead and type(value) == "string" then
-			local okWrite, writeErr = writeFileSegmented(path, value, options)
-
-			if okWrite then
-				local file = {
-					Property = propertyName,
-					Path = path,
-					Bytes = #value,
-				}
-
-				table.insert(result.Files, file)
-				table.insert(manifestLines, table.concat({
-					propertyName,
-					path,
-					tostring(#value),
-					"saved",
-					"",
-				}, "\t"))
-			else
-				local message = tostring(writeErr)
-				table.insert(result.Errors, propertyName .. ": " .. message)
-				table.insert(manifestLines, table.concat({
-					propertyName,
-					path,
-					"0",
-					"write_failed",
-					message,
-				}, "\t"))
-			end
-		else
-			local message = okRead and ("expected string, got " .. typeof(value)) or tostring(value)
-			table.insert(result.Errors, propertyName .. ": " .. message)
-			table.insert(manifestLines, table.concat({
-				propertyName,
-				path,
-				"0",
-				"read_failed",
-				message,
-			}, "\t"))
-		end
-	end
-
-	local manifest = {
-		Version = 1,
-		Mode = result.Mode,
-		Folder = options.TerrainFolder,
-		Files = result.Files,
-		Errors = result.Errors,
-	}
-	local encodedManifest = encodeJson(manifest)
-
-	if encodedManifest then
-		writeFileSegmented(normalizePath(options.TerrainFolder .. "/manifest.json"), encodedManifest, options)
-	end
-
-	local writefile = getExecutorFunction("writefile")
-
-	if writefile then
-		pcall(writefile, normalizePath(options.TerrainFolder .. "/manifest.tsv"), table.concat(manifestLines, "\n"))
-	end
-
-	return result
-end
-
-local function readTerrainChunk(terrain, region, resolution)
-	local ok, materials, occupancies = pcall(function()
-		return terrain:ReadVoxels(region, resolution)
-	end)
-
-	if not ok then
-		return nil, materials
-	end
-
-	local cells = {}
-
-	for x, plane in ipairs(materials) do
-		for y, row in ipairs(plane) do
-			for z, material in ipairs(row) do
-				local occupancy = occupancies[x][y][z]
-
-				if material ~= Enum.Material.Air or occupancy > 0 then
-					table.insert(cells, {
-						x,
-						y,
-						z,
-						materialName(material),
-						occupancy,
-					})
-				end
-			end
-		end
-	end
-
-	return cells
-end
-
-local function saveTerrain(root, options)
-	local result = {
-		Mode = "Voxels",
-		Chunks = {},
-		Errors = {},
-		Folder = options.TerrainFolder,
-	}
-
-	local terrain = findTerrain(root)
-
-	if not terrain then
-		table.insert(result.Errors, "terrain was not found under the selected root")
-		return result
-	end
-
-	local okFolder, folderErr = ensureFolder(options.TerrainFolder)
-
-	if not okFolder then
-		table.insert(result.Errors, "could not create terrain folder: " .. tostring(folderErr))
-		return result
-	end
-
-	if options.TerrainSaveMode == "HiddenGrids" or options.TerrainSaveMode == "Auto" then
-		local hiddenResult = saveTerrainHiddenGrids(terrain, options)
-
-		if #hiddenResult.Errors == 0 or options.TerrainSaveMode == "HiddenGrids" then
-			return hiddenResult
-		end
-
-		result.HiddenGridErrors = hiddenResult.Errors
-		report(options, "Hidden terrain grids unavailable, falling back to voxels", 0.95)
-	end
-
-	local region, regionErr = getTerrainRegion(terrain, options)
-
-	if not region then
-		table.insert(result.Errors, regionErr)
-		return result
-	end
-
-	local resolution = options.TerrainResolution
-	local chunkSize = options.TerrainChunkSize
-	local chunkStuds = chunkSize * resolution
-	local min, max = getRegionBounds(region, resolution)
-	local totalX = math.max(1, math.ceil((max.X - min.X) / chunkStuds))
-	local totalY = math.max(1, math.ceil((max.Y - min.Y) / chunkStuds))
-	local totalZ = math.max(1, math.ceil((max.Z - min.Z) / chunkStuds))
-	local totalChunks = totalX * totalY * totalZ
-	local chunkIndex = 0
-	local manifestLines = {
-		"Index\tPath\tCellCount\tMin\tMax",
-	}
-
-	result.Region = {
-		Min = { min.X, min.Y, min.Z },
-		Max = { max.X, max.Y, max.Z },
-		Resolution = resolution,
-		ChunkSize = chunkSize,
-	}
-
-	for xIndex = 0, totalX - 1 do
-		for yIndex = 0, totalY - 1 do
-			for zIndex = 0, totalZ - 1 do
-				chunkIndex += 1
-
-				local chunkMin = Vector3.new(
-					min.X + xIndex * chunkStuds,
-					min.Y + yIndex * chunkStuds,
-					min.Z + zIndex * chunkStuds
-				)
-				local chunkMax = Vector3.new(
-					math.min(chunkMin.X + chunkStuds, max.X),
-					math.min(chunkMin.Y + chunkStuds, max.Y),
-					math.min(chunkMin.Z + chunkStuds, max.Z)
-				)
-				local chunkRegion = Region3.new(chunkMin, chunkMax):ExpandToGrid(resolution)
-				local cells, readErr = readTerrainChunk(terrain, chunkRegion, resolution)
-
-				report(options, string.format("Saving terrain chunk %d/%d", chunkIndex, totalChunks), 0.95)
-
-				if cells then
-					local chunkData = {
-						Version = 1,
-						Resolution = resolution,
-						Min = { chunkMin.X, chunkMin.Y, chunkMin.Z },
-						Max = { chunkMax.X, chunkMax.Y, chunkMax.Z },
-						Cells = cells,
-					}
-					local encoded, encodeErr = encodeJson(chunkData)
-					local path = normalizePath(string.format(
-						"%s/chunk_%03d_%03d_%03d.json",
-						options.TerrainFolder,
-						xIndex,
-						yIndex,
-						zIndex
-					))
-
-					if encoded then
-						local okWrite, writeErr = writeFileSegmented(path, encoded, options)
-
-						if okWrite then
-							local chunk = {
-								Path = path,
-								CellCount = #cells,
-								Min = chunkData.Min,
-								Max = chunkData.Max,
-							}
-
-							table.insert(result.Chunks, chunk)
-							table.insert(manifestLines, table.concat({
-								tostring(chunkIndex),
-								path,
-								tostring(#cells),
-								table.concat(chunkData.Min, ","),
-								table.concat(chunkData.Max, ","),
-							}, "\t"))
-						else
-							table.insert(result.Errors, "terrain chunk " .. tostring(chunkIndex) .. ": " .. tostring(writeErr))
-						end
-					else
-						table.insert(result.Errors, "terrain chunk " .. tostring(chunkIndex) .. ": " .. tostring(encodeErr))
-					end
-				else
-					table.insert(result.Errors, "terrain chunk " .. tostring(chunkIndex) .. ": " .. tostring(readErr))
-				end
-			end
-		end
-	end
-
-	local manifest = {
-		Version = 1,
-		Folder = options.TerrainFolder,
-		Region = result.Region,
-		ChunkCount = #result.Chunks,
-		Chunks = result.Chunks,
-	}
-	local encodedManifest = encodeJson(manifest)
-
-	if encodedManifest then
-		writeFileSegmented(normalizePath(options.TerrainFolder .. "/manifest.json"), encodedManifest, options)
-	end
-
-	local writefile = getExecutorFunction("writefile")
-
-	if writefile then
-		pcall(writefile, normalizePath(options.TerrainFolder .. "/manifest.tsv"), table.concat(manifestLines, "\n"))
-	end
-
-	return result
-end
-
 function SaveInstance.SaveInstance(root, userOptions)
 	assert(typeof(root) == "Instance", "SaveInstance(root, options) expects root to be an Instance")
 
@@ -1783,11 +1647,7 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		options.AssetsFolder = normalizePath(folder .. "/" .. DEFAULT_OPTIONS.AssetsFolder)
 	end
 
-	if options.SaveTerrain and (type(userOptions) ~= "table" or userOptions.TerrainFolder == nil) and folder then
-		options.TerrainFolder = normalizePath(folder .. "/" .. DEFAULT_OPTIONS.TerrainFolder)
-	end
-
-	local xml = buildDocument(root, options)
+	local xml, terrainResult = buildDocument(root, options)
 	local okWrite, writeErr = writeFileSegmented(normalizedPath, xml, options)
 
 	if not okWrite then
@@ -1798,17 +1658,9 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		Assets = {},
 		Errors = {},
 	}
-	local terrainResult = {
-		Chunks = {},
-		Errors = {},
-	}
 
 	if options.SaveAssets then
 		assetResult = saveAssets(root, options)
-	end
-
-	if options.SaveTerrain then
-		terrainResult = saveTerrain(root, options)
 	end
 
 	local errors = {}
@@ -1831,19 +1683,6 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		Terrain = terrainResult,
 		Errors = errors,
 	}
-end
-
-function SaveInstance.SaveTerrain(root, folderPath, userOptions)
-	assert(typeof(root) == "Instance", "SaveTerrain(root, folderPath, options) expects root to be an Instance")
-
-	local options = mergeOptions(userOptions)
-	options.SaveTerrain = true
-
-	if type(folderPath) == "string" and folderPath ~= "" then
-		options.TerrainFolder = normalizePath(folderPath)
-	end
-
-	return saveTerrain(root, options)
 end
 
 setmetatable(SaveInstance, {

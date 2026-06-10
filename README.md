@@ -7,8 +7,9 @@ Basic Roblox SaveInstance implementation written in Luau for executor environmen
 - Serializes a Roblox instance tree into a simple RBXLX-style XML string.
 - Can save the generated `.rbxlx` file with executor APIs like `writefile`.
 - Can optionally try to download referenced assets with `request`/`http_request`.
-- Can export Terrain voxels into chunked JSON files with materials and occupancy.
+- Can embed Terrain `SmoothGrid` and `PhysicsGrid` data into the generated `.rbxlx` when the executor supports `gethiddenproperty`.
 - Preserves asset references such as `MeshId`, `TextureID`, `SoundId`, `AnimationId`, `ShirtTemplate`, `PantsTemplate`, `Graphic`, and `Texture`.
+- Includes `Script`, `LocalScript`, and `ModuleScript` instances with empty `Source` placeholders.
 - Supports progress callbacks, segmented writing with `appendfile`, simple metadata, filters, and optional default-property skipping.
 
 ## Usage
@@ -19,7 +20,6 @@ local SaveInstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/
 local result = SaveInstance.SaveToFile(workspace, "dumps/place.rbxlx", {
 	SaveAssets = true,
 	SaveTerrain = true,
-	TerrainSaveMode = "HiddenGrids",
 	ShowReadMe = true,
 	IgnoreDefaultProperties = false,
 	Callback = function(message, progress)
@@ -38,23 +38,11 @@ local xml = SaveInstance(workspace)
 print(xml)
 ```
 
-To export only Terrain chunks:
-
-```lua
-local terrain = SaveInstance.SaveTerrain(workspace, "dumps/terrain", {
-	TerrainSaveMode = "HiddenGrids",
-	TerrainResolution = 4,
-	TerrainChunkSize = 64,
-})
-
-print(#terrain.Chunks)
-```
-
 ## Options
 
 ```lua
 {
-	IncludeScripts = false,
+	IncludeScripts = true,
 	SaveAssets = false,
 	SaveTerrain = false,
 	ShowReadMe = false,
@@ -62,11 +50,6 @@ print(#terrain.Chunks)
 	AlternativeWritefile = true,
 	WriteSegmentSize = 4194304,
 	AssetsFolder = "saveinstance_assets",
-	TerrainFolder = "saveinstance_terrain",
-	TerrainSaveMode = "Auto",
-	TerrainResolution = 4,
-	TerrainChunkSize = 64,
-	TerrainRegion = nil,
 	RequestTimeout = 20,
 	Callback = nil,
 	IgnoreClasses = {
@@ -84,12 +67,11 @@ print(#terrain.Chunks)
 
 ## Current limitations
 
-- Terrain hidden-grid mode saves `SmoothGrid.txt` and `PhysicsGrid.txt` with `gethiddenproperty` when the executor supports it.
-- Terrain voxel mode is still available as separate JSON chunks, not embedded into the `.rbxlx` TerrainRegion format yet.
-- Script source is not decompiled or recovered.
+- Terrain embedding requires `gethiddenproperty` support for `SmoothGrid` and `PhysicsGrid`.
+- Script source is not decompiled or recovered; scripts are saved with empty `Source` placeholders.
 - RBXLX output is intentionally basic and is not a perfect 1:1 copy of Roblox Studio's exporter.
 - Asset downloading depends on executor HTTP support and Roblox asset permissions.
-- Hidden properties are only used for Terrain grids when `TerrainSaveMode = "HiddenGrids"` or `"Auto"` succeeds; nil instances, bytecode/decompiler APIs, and script-killing behavior are intentionally not used.
+- Hidden properties are used for Terrain grids and optional mesh/union binary data; nil instances, bytecode/decompiler APIs, and script-killing behavior are intentionally not used.
 
 ## License
 
