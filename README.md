@@ -13,7 +13,7 @@ Basic Roblox SaveInstance implementation written in Luau for executor environmen
 ## Usage
 
 ```lua
-local SaveInstance = loadstring(game:HttpGet("RAW_URL_HERE"))()
+local SaveInstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/D.E-save/main/saveinstance.lua"))()
 
 local result = SaveInstance.SaveToFile(workspace, "dumps/place.rbxlx", {
 	SaveAssets = true,
