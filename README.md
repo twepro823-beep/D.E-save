@@ -19,6 +19,7 @@ local SaveInstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/
 local result = SaveInstance.SaveToFile(workspace, "dumps/place.rbxlx", {
 	SaveAssets = true,
 	SaveTerrain = true,
+	TerrainSaveMode = "HiddenGrids",
 	ShowReadMe = true,
 	IgnoreDefaultProperties = false,
 	Callback = function(message, progress)
@@ -41,6 +42,7 @@ To export only Terrain chunks:
 
 ```lua
 local terrain = SaveInstance.SaveTerrain(workspace, "dumps/terrain", {
+	TerrainSaveMode = "HiddenGrids",
 	TerrainResolution = 4,
 	TerrainChunkSize = 64,
 })
@@ -61,6 +63,7 @@ print(#terrain.Chunks)
 	WriteSegmentSize = 4194304,
 	AssetsFolder = "saveinstance_assets",
 	TerrainFolder = "saveinstance_terrain",
+	TerrainSaveMode = "Auto",
 	TerrainResolution = 4,
 	TerrainChunkSize = 64,
 	TerrainRegion = nil,
@@ -81,11 +84,12 @@ print(#terrain.Chunks)
 
 ## Current limitations
 
-- Terrain is exported as separate JSON chunks, not embedded into the `.rbxlx` TerrainRegion format yet.
+- Terrain hidden-grid mode saves `SmoothGrid.txt` and `PhysicsGrid.txt` with `gethiddenproperty` when the executor supports it.
+- Terrain voxel mode is still available as separate JSON chunks, not embedded into the `.rbxlx` TerrainRegion format yet.
 - Script source is not decompiled or recovered.
 - RBXLX output is intentionally basic and is not a perfect 1:1 copy of Roblox Studio's exporter.
 - Asset downloading depends on executor HTTP support and Roblox asset permissions.
-- Hidden properties, nil instances, bytecode/decompiler APIs, and script-killing behavior are intentionally not used.
+- Hidden properties are only used for Terrain grids when `TerrainSaveMode = "HiddenGrids"` or `"Auto"` succeeds; nil instances, bytecode/decompiler APIs, and script-killing behavior are intentionally not used.
 
 ## License
 

@@ -17,8 +17,8 @@
 	appendfile, makefolder/isfolder, and request/http_request.
 
 	This does not decompile scripts, read bytecode, embed TerrainRegion binary
-	data, or use hidden-property/nil-instance tricks. Terrain voxels can be
-	exported separately as chunked JSON files.
+	data, or use nil-instance tricks. Terrain can be exported with executor
+	gethiddenproperty grids or as chunked JSON voxels.
 ]]
 
 local SaveInstance = {}
@@ -33,6 +33,7 @@ local DEFAULT_OPTIONS = {
 	WriteSegmentSize = 4 * 1024 * 1024,
 	AssetsFolder = "saveinstance_assets",
 	TerrainFolder = "saveinstance_terrain",
+	TerrainSaveMode = "Auto",
 	TerrainResolution = 4,
 	TerrainChunkSize = 64,
 	TerrainRegion = nil,
@@ -389,6 +390,7 @@ local function copyDefaults()
 		WriteSegmentSize = DEFAULT_OPTIONS.WriteSegmentSize,
 		AssetsFolder = DEFAULT_OPTIONS.AssetsFolder,
 		TerrainFolder = DEFAULT_OPTIONS.TerrainFolder,
+		TerrainSaveMode = DEFAULT_OPTIONS.TerrainSaveMode,
 		TerrainResolution = DEFAULT_OPTIONS.TerrainResolution,
 		TerrainChunkSize = DEFAULT_OPTIONS.TerrainChunkSize,
 		TerrainRegion = DEFAULT_OPTIONS.TerrainRegion,
@@ -455,6 +457,14 @@ local function mergeOptions(userOptions)
 
 	if type(userOptions.TerrainFolder) == "string" and userOptions.TerrainFolder ~= "" then
 		options.TerrainFolder = userOptions.TerrainFolder
+	end
+
+	if type(userOptions.TerrainSaveMode) == "string" then
+		local mode = userOptions.TerrainSaveMode
+
+		if mode == "Auto" or mode == "HiddenGrids" or mode == "Voxels" then
+			options.TerrainSaveMode = mode
+		end
 	end
 
 	if type(userOptions.TerrainResolution) == "number" and userOptions.TerrainResolution > 0 then
@@ -1081,6 +1091,25 @@ local function getRequestFunction()
 	return nil
 end
 
+local function getHiddenPropertyFunction()
+	local direct = getExecutorFunction("gethiddenproperty")
+		or getExecutorFunction("get_hidden_property")
+
+	if direct then
+		return direct
+	end
+
+	local okDebug, debugTable = pcall(function()
+		return debug
+	end)
+
+	if okDebug and type(debugTable) == "table" and type(debugTable.gethiddenproperty) == "function" then
+		return debugTable.gethiddenproperty
+	end
+
+	return nil
+end
+
 local function normalizePath(path)
 	path = tostring(path)
 	path = path:gsub("\\", "/")
@@ -1452,6 +1481,98 @@ local function materialName(material)
 	return tostring(material)
 end
 
+local function saveTerrainHiddenGrids(terrain, options)
+	local result = {
+		Mode = "HiddenGrids",
+		Files = {},
+		Errors = {},
+		Folder = options.TerrainFolder,
+	}
+	local gethiddenproperty = getHiddenPropertyFunction()
+
+	if not gethiddenproperty then
+		table.insert(result.Errors, "executor does not provide gethiddenproperty")
+		return result
+	end
+
+	local properties = {
+		"SmoothGrid",
+		"PhysicsGrid",
+	}
+	local manifestLines = {
+		"Property\tPath\tBytes\tStatus\tMessage",
+	}
+
+	for _, propertyName in ipairs(properties) do
+		report(options, "Saving terrain " .. propertyName, 0.95)
+
+		local okRead, value = pcall(gethiddenproperty, terrain, propertyName)
+		local path = normalizePath(options.TerrainFolder .. "/" .. propertyName .. ".txt")
+
+		if okRead and type(value) == "string" then
+			local okWrite, writeErr = writeFileSegmented(path, value, options)
+
+			if okWrite then
+				local file = {
+					Property = propertyName,
+					Path = path,
+					Bytes = #value,
+				}
+
+				table.insert(result.Files, file)
+				table.insert(manifestLines, table.concat({
+					propertyName,
+					path,
+					tostring(#value),
+					"saved",
+					"",
+				}, "\t"))
+			else
+				local message = tostring(writeErr)
+				table.insert(result.Errors, propertyName .. ": " .. message)
+				table.insert(manifestLines, table.concat({
+					propertyName,
+					path,
+					"0",
+					"write_failed",
+					message,
+				}, "\t"))
+			end
+		else
+			local message = okRead and ("expected string, got " .. typeof(value)) or tostring(value)
+			table.insert(result.Errors, propertyName .. ": " .. message)
+			table.insert(manifestLines, table.concat({
+				propertyName,
+				path,
+				"0",
+				"read_failed",
+				message,
+			}, "\t"))
+		end
+	end
+
+	local manifest = {
+		Version = 1,
+		Mode = result.Mode,
+		Folder = options.TerrainFolder,
+		Files = result.Files,
+		Errors = result.Errors,
+	}
+	local encodedManifest = encodeJson(manifest)
+
+	if encodedManifest then
+		writeFileSegmented(normalizePath(options.TerrainFolder .. "/manifest.json"), encodedManifest, options)
+	end
+
+	local writefile = getExecutorFunction("writefile")
+
+	if writefile then
+		pcall(writefile, normalizePath(options.TerrainFolder .. "/manifest.tsv"), table.concat(manifestLines, "\n"))
+	end
+
+	return result
+end
+
 local function readTerrainChunk(terrain, region, resolution)
 	local ok, materials, occupancies = pcall(function()
 		return terrain:ReadVoxels(region, resolution)
@@ -1486,6 +1607,7 @@ end
 
 local function saveTerrain(root, options)
 	local result = {
+		Mode = "Voxels",
 		Chunks = {},
 		Errors = {},
 		Folder = options.TerrainFolder,
@@ -1503,6 +1625,17 @@ local function saveTerrain(root, options)
 	if not okFolder then
 		table.insert(result.Errors, "could not create terrain folder: " .. tostring(folderErr))
 		return result
+	end
+
+	if options.TerrainSaveMode == "HiddenGrids" or options.TerrainSaveMode == "Auto" then
+		local hiddenResult = saveTerrainHiddenGrids(terrain, options)
+
+		if #hiddenResult.Errors == 0 or options.TerrainSaveMode == "HiddenGrids" then
+			return hiddenResult
+		end
+
+		result.HiddenGridErrors = hiddenResult.Errors
+		report(options, "Hidden terrain grids unavailable, falling back to voxels", 0.95)
 	end
 
 	local region, regionErr = getTerrainRegion(terrain, options)
