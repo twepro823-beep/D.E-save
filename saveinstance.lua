@@ -1,18 +1,39 @@
 --[[
-	Basic SaveInstance for Luau.
+	Basic SaveInstance for Luau/executors.
 
 	Usage:
 		local SaveInstance = require(path.to.saveinstance)
 		local rbxlx = SaveInstance(workspace)
+		local result = SaveInstance.SaveToFile(workspace, "dumps/place.rbxlx", {
+			SaveAssets = true,
+			ShowReadMe = true,
+			Callback = function(message, progress)
+				print(message, progress)
+			end,
+		})
 
-	This module returns a minimal RBXLX-like XML string. It does not write files,
-	download assets, serialize Terrain voxels, or read Script.Source.
+	SaveInstance(root, options) returns a minimal RBXLX-like XML string.
+	SaveToFile(root, path, options) uses executor APIs such as writefile,
+	appendfile, makefolder/isfolder, and request/http_request.
+
+	This does not decompile scripts, read bytecode, serialize Terrain voxels, or
+	use hidden-property/nil-instance tricks.
 ]]
 
 local SaveInstance = {}
 
 local DEFAULT_OPTIONS = {
 	IncludeScripts = false,
+	SaveAssets = false,
+	ShowReadMe = false,
+	IgnoreDefaultProperties = false,
+	AlternativeWritefile = true,
+	WriteSegmentSize = 4 * 1024 * 1024,
+	AssetsFolder = "saveinstance_assets",
+	RequestTimeout = 20,
+	Callback = nil,
+	IgnoreClasses = {},
+	IgnoreInstances = {},
 	IgnoreServices = {
 		CoreGui = true,
 		CorePackages = true,
@@ -337,11 +358,43 @@ local SKIPPED_SCRIPT_CLASSES = {
 	ModuleScript = true,
 }
 
+local ASSET_PROPERTY_NAMES = {
+	AnimationId = true,
+	Graphic = true,
+	MeshId = true,
+	PantsTemplate = true,
+	ShirtTemplate = true,
+	SoundId = true,
+	Texture = true,
+	TextureID = true,
+	TextureId = true,
+}
+
+local DEFAULT_INSTANCE_CACHE = {}
+
 local function copyDefaults()
 	local options = {
 		IncludeScripts = DEFAULT_OPTIONS.IncludeScripts,
+		SaveAssets = DEFAULT_OPTIONS.SaveAssets,
+		ShowReadMe = DEFAULT_OPTIONS.ShowReadMe,
+		IgnoreDefaultProperties = DEFAULT_OPTIONS.IgnoreDefaultProperties,
+		AlternativeWritefile = DEFAULT_OPTIONS.AlternativeWritefile,
+		WriteSegmentSize = DEFAULT_OPTIONS.WriteSegmentSize,
+		AssetsFolder = DEFAULT_OPTIONS.AssetsFolder,
+		RequestTimeout = DEFAULT_OPTIONS.RequestTimeout,
+		Callback = DEFAULT_OPTIONS.Callback,
+		IgnoreClasses = {},
+		IgnoreInstances = {},
 		IgnoreServices = {},
 	}
+
+	for className, ignored in pairs(DEFAULT_OPTIONS.IgnoreClasses) do
+		options.IgnoreClasses[className] = ignored
+	end
+
+	for instance, ignored in pairs(DEFAULT_OPTIONS.IgnoreInstances) do
+		options.IgnoreInstances[instance] = ignored
+	end
 
 	for name, ignored in pairs(DEFAULT_OPTIONS.IgnoreServices) do
 		options.IgnoreServices[name] = ignored
@@ -359,6 +412,58 @@ local function mergeOptions(userOptions)
 
 	if userOptions.IncludeScripts ~= nil then
 		options.IncludeScripts = userOptions.IncludeScripts == true
+	end
+
+	if userOptions.SaveAssets ~= nil then
+		options.SaveAssets = userOptions.SaveAssets == true
+	end
+
+	if userOptions.ShowReadMe ~= nil then
+		options.ShowReadMe = userOptions.ShowReadMe == true
+	end
+
+	if userOptions.IgnoreDefaultProperties ~= nil then
+		options.IgnoreDefaultProperties = userOptions.IgnoreDefaultProperties == true
+	end
+
+	if userOptions.AlternativeWritefile ~= nil then
+		options.AlternativeWritefile = userOptions.AlternativeWritefile == true
+	end
+
+	if type(userOptions.WriteSegmentSize) == "number" and userOptions.WriteSegmentSize > 0 then
+		options.WriteSegmentSize = math.floor(userOptions.WriteSegmentSize)
+	end
+
+	if type(userOptions.AssetsFolder) == "string" and userOptions.AssetsFolder ~= "" then
+		options.AssetsFolder = userOptions.AssetsFolder
+	end
+
+	if type(userOptions.RequestTimeout) == "number" and userOptions.RequestTimeout > 0 then
+		options.RequestTimeout = userOptions.RequestTimeout
+	end
+
+	if type(userOptions.Callback) == "function" then
+		options.Callback = userOptions.Callback
+	end
+
+	if type(userOptions.IgnoreClasses) == "table" then
+		for className, ignored in pairs(userOptions.IgnoreClasses) do
+			if type(className) == "string" then
+				options.IgnoreClasses[className] = ignored ~= false
+			elseif type(ignored) == "string" then
+				options.IgnoreClasses[ignored] = true
+			end
+		end
+	end
+
+	if type(userOptions.IgnoreInstances) == "table" then
+		for instance, ignored in pairs(userOptions.IgnoreInstances) do
+			if typeof(instance) == "Instance" then
+				options.IgnoreInstances[instance] = ignored ~= false
+			elseif typeof(ignored) == "Instance" then
+				options.IgnoreInstances[ignored] = true
+			end
+		end
 	end
 
 	if type(userOptions.IgnoreServices) == "table" then
@@ -626,6 +731,70 @@ local function appendPropertyName(list, seen, propertyName)
 	end
 end
 
+local function report(options, message, progress)
+	if type(options.Callback) == "function" then
+		pcall(options.Callback, message, progress)
+	end
+end
+
+local function canCreateDefault(className)
+	local ok, instance = pcall(Instance.new, className)
+
+	if ok and instance then
+		DEFAULT_INSTANCE_CACHE[className] = instance
+		return instance
+	end
+
+	DEFAULT_INSTANCE_CACHE[className] = false
+	return nil
+end
+
+local function getDefaultInstance(className)
+	local cached = DEFAULT_INSTANCE_CACHE[className]
+
+	if cached == nil then
+		return canCreateDefault(className)
+	end
+
+	if cached == false then
+		return nil
+	end
+
+	return cached
+end
+
+local function valuesEqual(left, right)
+	if typeof(left) ~= typeof(right) then
+		return false
+	end
+
+	local valueType = typeof(left)
+
+	if valueType == "number" then
+		return math.abs(left - right) < 0.000001
+	end
+
+	if valueType == "CFrame" then
+		return select(1, left:GetComponents()) == select(1, right:GetComponents()) and tostring(left) == tostring(right)
+	end
+
+	return left == right
+end
+
+local function isDefaultProperty(instance, propertyName, value)
+	local defaultInstance = getDefaultInstance(instance.ClassName)
+
+	if not defaultInstance then
+		return false
+	end
+
+	local ok, defaultValue = pcall(function()
+		return defaultInstance[propertyName]
+	end)
+
+	return ok and valuesEqual(value, defaultValue)
+end
+
 local function getPropertiesFor(instance)
 	local properties = {}
 	local seen = {}
@@ -656,6 +825,14 @@ local function getPropertiesFor(instance)
 end
 
 local function shouldInclude(instance, options)
+	if options.IgnoreInstances[instance] then
+		return false
+	end
+
+	if options.IgnoreClasses[instance.ClassName] then
+		return false
+	end
+
 	if not options.IncludeScripts and SKIPPED_SCRIPT_CLASSES[instance.ClassName] then
 		return false
 	end
@@ -693,7 +870,7 @@ local function buildReferences(instances)
 	return references
 end
 
-local function appendProperties(lines, level, instance, references)
+local function appendProperties(lines, level, instance, references, options)
 	table.insert(lines, string.format("%s<Properties>", indent(level)))
 
 	for _, propertyName in ipairs(getPropertiesFor(instance)) do
@@ -701,7 +878,7 @@ local function appendProperties(lines, level, instance, references)
 			return instance[propertyName]
 		end)
 
-		if ok then
+		if ok and (not options.IgnoreDefaultProperties or not isDefaultProperty(instance, propertyName, value)) then
 			appendProperty(lines, level + 1, propertyName, value, references)
 		end
 	end
@@ -723,7 +900,7 @@ local function appendItem(lines, level, instance, options, references)
 		xmlEscape(referent)
 	))
 
-	appendProperties(lines, level + 1, instance, references)
+	appendProperties(lines, level + 1, instance, references, options)
 
 	for _, child in ipairs(instance:GetChildren()) do
 		if references[child] and shouldInclude(child, options) then
@@ -734,8 +911,60 @@ local function appendItem(lines, level, instance, options, references)
 	table.insert(lines, string.format("%s</Item>", indent(level)))
 end
 
+local function getRobloxVersion()
+	local ok, result = pcall(function()
+		return version()
+	end)
+
+	if ok and result then
+		return result
+	end
+
+	ok, result = pcall(function()
+		return game:GetService("RunService"):GetRobloxVersion()
+	end)
+
+	if ok and result then
+		return result
+	end
+
+	return "UNKNOWN"
+end
+
+local function appendMetadata(lines, root, options, instanceCount)
+	table.insert(lines, string.format("\t<Meta name=\"D.E save Root\">%s</Meta>", xmlEscape(root:GetFullName())))
+	table.insert(lines, string.format("\t<Meta name=\"D.E save InstanceCount\">%s</Meta>", tostring(instanceCount)))
+	table.insert(lines, string.format("\t<Meta name=\"D.E save GeneratedAtUnix\">%s</Meta>", tostring(os.time())))
+	table.insert(lines, string.format("\t<Meta name=\"D.E save RobloxVersion\">%s</Meta>", xmlEscape(getRobloxVersion())))
+	table.insert(lines, string.format("\t<Meta name=\"D.E save IgnoreDefaultProperties\">%s</Meta>", options.IgnoreDefaultProperties and "true" or "false"))
+end
+
+local function appendReadMe(lines, level, options, references)
+	if not options.ShowReadMe then
+		return
+	end
+
+	local referent = "RBX_README"
+	local body = table.concat({
+		"D.E save export",
+		"",
+		"This file was generated by a basic Luau RBXLX exporter.",
+		"Scripts are not decompiled and Terrain voxels are not serialized in this version.",
+		"Asset properties are preserved by reference; optional asset downloads are stored beside the file.",
+	}, "\n")
+
+	table.insert(lines, string.format("%s<Item class=\"Script\" referent=\"%s\">", indent(level), referent))
+	table.insert(lines, string.format("%s<Properties>", indent(level + 1)))
+	appendSimpleXml(lines, level + 2, "string", "Name", "D.E save README")
+	appendSimpleXml(lines, level + 2, "bool", "Archivable", "true")
+	appendSimpleXml(lines, level + 2, "ProtectedString", "Source", body)
+	table.insert(lines, string.format("%s</Properties>", indent(level + 1)))
+	table.insert(lines, string.format("%s</Item>", indent(level)))
+end
+
 local function buildDocument(root, options)
 	local instances = {}
+	report(options, "Collecting instances", 0)
 	collectInstances(root, options, instances, true)
 
 	local references = buildReferences(instances)
@@ -745,11 +974,347 @@ local function buildDocument(root, options)
 		"\t<Meta name=\"ExplicitAutoJoints\">true</Meta>",
 	}
 
+	appendMetadata(lines, root, options, #instances)
+	report(options, "Serializing instances", 0.25)
 	appendItem(lines, 1, root, options, references)
+	appendReadMe(lines, 1, options, references)
 
 	table.insert(lines, "</roblox>")
+	report(options, "XML ready", 0.75)
 
 	return table.concat(lines, "\n")
+end
+
+local function getExecutorEnvironment()
+	local ok, env = pcall(function()
+		if getgenv then
+			return getgenv()
+		end
+
+		if getfenv then
+			return getfenv(0)
+		end
+
+		return _G
+	end)
+
+	if ok and type(env) == "table" then
+		return env
+	end
+
+	return _G
+end
+
+local function getExecutorFunction(name)
+	local env = getExecutorEnvironment()
+	local value = env and env[name]
+
+	if type(value) == "function" then
+		return value
+	end
+
+	value = rawget(_G, name)
+
+	if type(value) == "function" then
+		return value
+	end
+
+	return nil
+end
+
+local function getRequestFunction()
+	local directRequest = getExecutorFunction("request")
+		or getExecutorFunction("http_request")
+		or getExecutorFunction("httpRequest")
+
+	if directRequest then
+		return directRequest
+	end
+
+	local okSyn, synTable = pcall(function()
+		return syn
+	end)
+
+	if okSyn and type(synTable) == "table" and type(synTable.request) == "function" then
+		return synTable.request
+	end
+
+	local okHttp, httpTable = pcall(function()
+		return http
+	end)
+
+	if okHttp and type(httpTable) == "table" and type(httpTable.request) == "function" then
+		return httpTable.request
+	end
+
+	return nil
+end
+
+local function normalizePath(path)
+	path = tostring(path)
+	path = path:gsub("\\", "/")
+	path = path:gsub("/+", "/")
+	return path
+end
+
+local function parentFolderOf(path)
+	path = normalizePath(path)
+	return path:match("^(.*)/[^/]+$")
+end
+
+local function ensureFolder(path)
+	path = normalizePath(path or "")
+
+	if path == "" or path == "." then
+		return true
+	end
+
+	local makefolder = getExecutorFunction("makefolder")
+	local isfolder = getExecutorFunction("isfolder")
+
+	if not makefolder then
+		return false, "executor does not provide makefolder"
+	end
+
+	local current = ""
+
+	for part in string.gmatch(path, "[^/]+") do
+		current = current == "" and part or (current .. "/" .. part)
+
+		local exists = false
+
+		if isfolder then
+			local ok, result = pcall(isfolder, current)
+			exists = ok and result == true
+		end
+
+		if not exists then
+			local ok, err = pcall(makefolder, current)
+
+			if not ok then
+				return false, err
+			end
+		end
+	end
+
+	return true
+end
+
+local function writeFileSegmented(path, content, options)
+	local writefile = getExecutorFunction("writefile")
+	local appendfile = getExecutorFunction("appendfile")
+
+	if not writefile then
+		return false, "executor does not provide writefile"
+	end
+
+	if not options.AlternativeWritefile or not appendfile or #content <= options.WriteSegmentSize then
+		local ok, err = pcall(writefile, path, content)
+		return ok, err
+	end
+
+	local ok, err = pcall(writefile, path, "")
+
+	if not ok then
+		return false, err
+	end
+
+	local total = math.ceil(#content / options.WriteSegmentSize)
+	local index = 0
+
+	for offset = 1, #content, options.WriteSegmentSize do
+		index += 1
+		local chunk = string.sub(content, offset, offset + options.WriteSegmentSize - 1)
+		ok, err = pcall(appendfile, path, chunk)
+
+		if not ok then
+			return false, err
+		end
+
+		report(options, string.format("Writing file %d/%d", index, total), 0.75 + (index / total) * 0.2)
+
+		if task and task.wait then
+			task.wait()
+		end
+	end
+
+	return true
+end
+
+local function getBodyFromResponse(response)
+	if type(response) == "string" then
+		return response
+	end
+
+	if type(response) ~= "table" then
+		return nil
+	end
+
+	return response.Body or response.body or response.Data or response.data
+end
+
+local function getStatusFromResponse(response)
+	if type(response) ~= "table" then
+		return 200
+	end
+
+	return response.StatusCode or response.Status or response.status_code or response.status
+end
+
+local function extractAssetId(value)
+	if type(value) ~= "string" or value == "" then
+		return nil
+	end
+
+	return value:match("rbxassetid://(%d+)")
+		or value:match("[?&]id=(%d+)")
+		or value:match("/asset/%?id=(%d+)")
+		or value:match("(%d+)")
+end
+
+local function sanitizeFilePart(value)
+	value = tostring(value):gsub("[^%w%._%-]", "_"):gsub("_+", "_")
+	return value ~= "" and value or "asset"
+end
+
+local function collectAssetReferences(root, options)
+	local instances = {}
+	local assetsById = {}
+	local orderedAssets = {}
+
+	collectInstances(root, options, instances, true)
+
+	for _, instance in ipairs(instances) do
+		for _, propertyName in ipairs(getPropertiesFor(instance)) do
+			if ASSET_PROPERTY_NAMES[propertyName] then
+				local ok, value = pcall(function()
+					return instance[propertyName]
+				end)
+
+				local assetId = ok and extractAssetId(value) or nil
+
+				if assetId and not assetsById[assetId] then
+					local asset = {
+						Id = assetId,
+						Property = propertyName,
+						ClassName = instance.ClassName,
+						InstanceName = instance.Name,
+						Original = value,
+					}
+
+					assetsById[assetId] = asset
+					table.insert(orderedAssets, asset)
+				end
+			end
+		end
+	end
+
+	return orderedAssets
+end
+
+local function requestAsset(assetId, options)
+	local request = getRequestFunction()
+
+	if not request then
+		return nil, "executor does not provide request/http_request"
+	end
+
+	local ok, response = pcall(request, {
+		Url = "https://assetdelivery.roblox.com/v1/asset/?id=" .. tostring(assetId),
+		Method = "GET",
+		Timeout = options.RequestTimeout,
+	})
+
+	if not ok then
+		return nil, response
+	end
+
+	local status = getStatusFromResponse(response)
+	local body = getBodyFromResponse(response)
+
+	if type(status) == "number" and (status < 200 or status >= 300) then
+		return nil, "HTTP " .. tostring(status)
+	end
+
+	if type(body) ~= "string" or body == "" then
+		return nil, "empty response body"
+	end
+
+	return body
+end
+
+local function appendManifestLine(lines, asset, path, status, message)
+	table.insert(lines, table.concat({
+		tostring(asset.Id),
+		status,
+		path or "",
+		asset.ClassName or "",
+		asset.InstanceName or "",
+		asset.Property or "",
+		asset.Original or "",
+		message or "",
+	}, "\t"))
+end
+
+local function saveAssets(root, options)
+	local writefile = getExecutorFunction("writefile")
+	local result = {
+		Assets = {},
+		Errors = {},
+	}
+
+	if not writefile then
+		table.insert(result.Errors, "executor does not provide writefile")
+		return result
+	end
+
+	local okFolder, folderErr = ensureFolder(options.AssetsFolder)
+
+	if not okFolder then
+		table.insert(result.Errors, "could not create assets folder: " .. tostring(folderErr))
+		return result
+	end
+
+	local assets = collectAssetReferences(root, options)
+	local manifestLines = {
+		"Id\tStatus\tPath\tClassName\tInstanceName\tProperty\tOriginal\tMessage",
+	}
+
+	for index, asset in ipairs(assets) do
+		report(options, string.format("Saving asset %d/%d", index, #assets), 0.95)
+
+		local assetPath = normalizePath(options.AssetsFolder .. "/" .. sanitizeFilePart(asset.Id) .. ".asset")
+		local body, requestErr = requestAsset(asset.Id, options)
+
+		if body then
+			local okWrite, writeErr = pcall(writefile, assetPath, body)
+
+			if okWrite then
+				asset.Path = assetPath
+				asset.Status = "saved"
+				table.insert(result.Assets, asset)
+				appendManifestLine(manifestLines, asset, assetPath, "saved")
+			else
+				local message = tostring(writeErr)
+				asset.Status = "write_failed"
+				asset.Error = message
+				table.insert(result.Assets, asset)
+				table.insert(result.Errors, "asset " .. asset.Id .. ": " .. message)
+				appendManifestLine(manifestLines, asset, assetPath, "write_failed", message)
+			end
+		else
+			local message = tostring(requestErr)
+			asset.Status = "download_failed"
+			asset.Error = message
+			table.insert(result.Assets, asset)
+			table.insert(result.Errors, "asset " .. asset.Id .. ": " .. message)
+			appendManifestLine(manifestLines, asset, assetPath, "download_failed", message)
+		end
+	end
+
+	pcall(writefile, normalizePath(options.AssetsFolder .. "/manifest.tsv"), table.concat(manifestLines, "\n"))
+
+	return result
 end
 
 function SaveInstance.SaveInstance(root, userOptions)
@@ -757,6 +1322,53 @@ function SaveInstance.SaveInstance(root, userOptions)
 
 	local options = mergeOptions(userOptions)
 	return buildDocument(root, options)
+end
+
+function SaveInstance.SaveToFile(root, filePath, userOptions)
+	assert(typeof(root) == "Instance", "SaveToFile(root, filePath, options) expects root to be an Instance")
+	assert(type(filePath) == "string" and filePath ~= "", "SaveToFile(root, filePath, options) expects a non-empty filePath")
+
+	local options = mergeOptions(userOptions)
+	local normalizedPath = normalizePath(filePath)
+	local folder = parentFolderOf(normalizedPath)
+
+	if folder then
+		local okFolder, folderErr = ensureFolder(folder)
+
+		if not okFolder then
+			error("could not create output folder: " .. tostring(folderErr), 2)
+		end
+	end
+
+	if options.SaveAssets and (type(userOptions) ~= "table" or userOptions.AssetsFolder == nil) and folder then
+		options.AssetsFolder = normalizePath(folder .. "/" .. DEFAULT_OPTIONS.AssetsFolder)
+	end
+
+	local xml = buildDocument(root, options)
+	local okWrite, writeErr = writeFileSegmented(normalizedPath, xml, options)
+
+	if not okWrite then
+		error("could not write RBXLX file: " .. tostring(writeErr), 2)
+	end
+
+	local assetResult = {
+		Assets = {},
+		Errors = {},
+	}
+
+	if options.SaveAssets then
+		assetResult = saveAssets(root, options)
+	end
+
+	report(options, "Done", 1)
+
+	return {
+		Ok = #assetResult.Errors == 0,
+		Path = normalizedPath,
+		Content = xml,
+		Assets = assetResult.Assets,
+		Errors = assetResult.Errors,
+	}
 end
 
 setmetatable(SaveInstance, {
