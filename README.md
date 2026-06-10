@@ -8,6 +8,7 @@ Basic Roblox SaveInstance implementation written in Luau for executor environmen
 - Can save the generated `.rbxlx` file with executor APIs like `writefile`.
 - Can optionally try to download referenced assets with `request`/`http_request`.
 - Can embed Terrain `SmoothGrid` and `PhysicsGrid` data into the generated `.rbxlx` when the executor supports `gethiddenproperty`.
+- Can preserve attributes and CollectionService tags in best-effort binary properties.
 - Preserves asset references such as `MeshId`, `TextureID`, `SoundId`, `AnimationId`, `ShirtTemplate`, `PantsTemplate`, `Graphic`, and `Texture`.
 - Includes `Script`, `LocalScript`, and `ModuleScript` instances with empty `Source` placeholders.
 - Supports progress callbacks, segmented writing with `appendfile`, simple metadata, filters, and optional default-property skipping.
@@ -20,6 +21,8 @@ local SaveInstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/
 local result = SaveInstance.SaveToFile(workspace, "dumps/place.rbxlx", {
 	SaveAssets = true,
 	SaveTerrain = true,
+	SaveAttributes = true,
+	SaveTags = true,
 	ShowReadMe = true,
 	IgnoreDefaultProperties = false,
 	Callback = function(message, progress)
@@ -45,6 +48,11 @@ print(xml)
 	IncludeScripts = true,
 	SaveAssets = false,
 	SaveTerrain = false,
+	SaveAttributes = true,
+	SaveTags = true,
+	SaveHiddenProperties = true,
+	RobloxLikeReferents = true,
+	ShowStatus = false,
 	ShowReadMe = false,
 	IgnoreDefaultProperties = false,
 	AlternativeWritefile = true,
@@ -68,6 +76,7 @@ print(xml)
 ## Current limitations
 
 - Terrain embedding requires `gethiddenproperty` support for `SmoothGrid` and `PhysicsGrid`.
+- Attribute and tag export uses D.E save's own best-effort binary payloads inside `AttributesSerialize` and `Tags`.
 - Script source is not decompiled or recovered; scripts are saved with empty `Source` placeholders.
 - RBXLX output is intentionally basic and is not a perfect 1:1 copy of Roblox Studio's exporter.
 - Asset downloading depends on executor HTTP support and Roblox asset permissions.

@@ -27,6 +27,11 @@ local DEFAULT_OPTIONS = {
 	IncludeScripts = true,
 	SaveAssets = false,
 	SaveTerrain = false,
+	SaveAttributes = true,
+	SaveTags = true,
+	SaveHiddenProperties = true,
+	RobloxLikeReferents = true,
+	ShowStatus = false,
 	ShowReadMe = false,
 	IgnoreDefaultProperties = false,
 	AlternativeWritefile = true,
@@ -66,9 +71,22 @@ local CLASS_PROPERTIES = {
 		"FallenPartsDestroyHeight",
 	},
 
+	Camera = {
+		"CFrame",
+		"CameraType",
+		"FieldOfView",
+		"FieldOfViewMode",
+		"Focus",
+		"HeadLocked",
+		"HeadScale",
+		"MaxAxisFieldOfView",
+	},
+
 	Model = {
 		"PrimaryPart",
 		"WorldPivot",
+		"LevelOfDetail",
+		"ModelStreamingMode",
 	},
 
 	Folder = {},
@@ -135,6 +153,97 @@ local CLASS_PROPERTIES = {
 		"Part0",
 		"Part1",
 		"Enabled",
+	},
+
+	AlignPosition = {
+		"Attachment0",
+		"Attachment1",
+		"Enabled",
+		"MaxForce",
+		"MaxVelocity",
+		"Mode",
+		"Position",
+		"Responsiveness",
+		"RigidityEnabled",
+	},
+
+	AlignOrientation = {
+		"Attachment0",
+		"Attachment1",
+		"CFrame",
+		"Enabled",
+		"MaxAngularVelocity",
+		"MaxTorque",
+		"Mode",
+		"Responsiveness",
+		"RigidityEnabled",
+	},
+
+	BallSocketConstraint = {
+		"Attachment0",
+		"Attachment1",
+		"Enabled",
+		"LimitsEnabled",
+		"Radius",
+		"Restitution",
+		"TwistLimitsEnabled",
+		"TwistLowerAngle",
+		"TwistUpperAngle",
+		"UpperAngle",
+	},
+
+	HingeConstraint = {
+		"Attachment0",
+		"Attachment1",
+		"ActuatorType",
+		"AngularResponsiveness",
+		"AngularSpeed",
+		"Enabled",
+		"LimitsEnabled",
+		"LowerAngle",
+		"MotorMaxAcceleration",
+		"MotorMaxTorque",
+		"Restitution",
+		"ServoMaxTorque",
+		"TargetAngle",
+		"UpperAngle",
+	},
+
+	RodConstraint = {
+		"Attachment0",
+		"Attachment1",
+		"Enabled",
+		"Length",
+		"LimitAngle0",
+		"LimitAngle1",
+		"LimitsEnabled",
+		"Thickness",
+	},
+
+	RopeConstraint = {
+		"Attachment0",
+		"Attachment1",
+		"Enabled",
+		"Length",
+		"Restitution",
+		"Thickness",
+		"Visible",
+	},
+
+	SpringConstraint = {
+		"Attachment0",
+		"Attachment1",
+		"Coils",
+		"Damping",
+		"Enabled",
+		"FreeLength",
+		"LimitsEnabled",
+		"MaxForce",
+		"MaxLength",
+		"MinLength",
+		"Radius",
+		"Stiffness",
+		"Thickness",
 	},
 
 	Weld = {
@@ -362,17 +471,293 @@ local CLASS_PROPERTIES = {
 		"SparkleColor",
 	},
 
+	ProximityPrompt = {
+		"ActionText",
+		"AutoLocalize",
+		"ClickablePrompt",
+		"Enabled",
+		"Exclusivity",
+		"GamepadKeyCode",
+		"HoldDuration",
+		"KeyboardKeyCode",
+		"MaxActivationDistance",
+		"ObjectText",
+		"RequiresLineOfSight",
+		"RootLocalizationTable",
+		"Style",
+		"UIOffset",
+	},
+
+	ClickDetector = {
+		"CursorIcon",
+		"MaxActivationDistance",
+	},
+
+	ScreenGui = {
+		"DisplayOrder",
+		"Enabled",
+		"IgnoreGuiInset",
+		"ResetOnSpawn",
+		"ScreenInsets",
+		"ZIndexBehavior",
+	},
+
+	SurfaceGui = {
+		"Active",
+		"Adornee",
+		"AlwaysOnTop",
+		"Brightness",
+		"CanvasSize",
+		"ClipsDescendants",
+		"Enabled",
+		"Face",
+		"LightInfluence",
+		"MaxDistance",
+		"PixelsPerStud",
+		"SizingMode",
+		"ToolPunchThroughDistance",
+		"ZIndexBehavior",
+	},
+
+	BillboardGui = {
+		"Active",
+		"Adornee",
+		"AlwaysOnTop",
+		"Brightness",
+		"ClipsDescendants",
+		"Enabled",
+		"ExtentsOffset",
+		"ExtentsOffsetWorldSpace",
+		"LightInfluence",
+		"MaxDistance",
+		"PlayerToHideFrom",
+		"Size",
+		"SizeOffset",
+		"StudsOffset",
+		"StudsOffsetWorldSpace",
+		"ZIndexBehavior",
+	},
+
+	Frame = {
+		"Active",
+		"AnchorPoint",
+		"AutomaticSize",
+		"BackgroundColor3",
+		"BackgroundTransparency",
+		"BorderColor3",
+		"BorderMode",
+		"BorderSizePixel",
+		"ClipsDescendants",
+		"LayoutOrder",
+		"Position",
+		"Rotation",
+		"Selectable",
+		"Size",
+		"SizeConstraint",
+		"Visible",
+		"ZIndex",
+	},
+
+	TextLabel = {
+		"Active",
+		"AnchorPoint",
+		"AutomaticSize",
+		"BackgroundColor3",
+		"BackgroundTransparency",
+		"BorderColor3",
+		"BorderMode",
+		"BorderSizePixel",
+		"ClipsDescendants",
+		"Font",
+		"LayoutOrder",
+		"LineHeight",
+		"Position",
+		"RichText",
+		"Rotation",
+		"Selectable",
+		"Size",
+		"SizeConstraint",
+		"Text",
+		"TextColor3",
+		"TextScaled",
+		"TextSize",
+		"TextStrokeColor3",
+		"TextStrokeTransparency",
+		"TextTransparency",
+		"TextTruncate",
+		"TextWrapped",
+		"TextXAlignment",
+		"TextYAlignment",
+		"Visible",
+		"ZIndex",
+	},
+
+	TextButton = {
+		"Active",
+		"AnchorPoint",
+		"AutoButtonColor",
+		"AutomaticSize",
+		"BackgroundColor3",
+		"BackgroundTransparency",
+		"BorderColor3",
+		"BorderMode",
+		"BorderSizePixel",
+		"ClipsDescendants",
+		"Font",
+		"LayoutOrder",
+		"LineHeight",
+		"Modal",
+		"Position",
+		"RichText",
+		"Rotation",
+		"Selectable",
+		"Selected",
+		"Size",
+		"SizeConstraint",
+		"Style",
+		"Text",
+		"TextColor3",
+		"TextScaled",
+		"TextSize",
+		"TextStrokeColor3",
+		"TextStrokeTransparency",
+		"TextTransparency",
+		"TextTruncate",
+		"TextWrapped",
+		"TextXAlignment",
+		"TextYAlignment",
+		"Visible",
+		"ZIndex",
+	},
+
+	ImageLabel = {
+		"Active",
+		"AnchorPoint",
+		"AutomaticSize",
+		"BackgroundColor3",
+		"BackgroundTransparency",
+		"BorderColor3",
+		"BorderMode",
+		"BorderSizePixel",
+		"ClipsDescendants",
+		"Image",
+		"ImageColor3",
+		"ImageRectOffset",
+		"ImageRectSize",
+		"ImageTransparency",
+		"LayoutOrder",
+		"Position",
+		"ResampleMode",
+		"Rotation",
+		"ScaleType",
+		"Selectable",
+		"Size",
+		"SizeConstraint",
+		"SliceCenter",
+		"SliceScale",
+		"TileSize",
+		"Visible",
+		"ZIndex",
+	},
+
+	ImageButton = {
+		"Active",
+		"AnchorPoint",
+		"AutoButtonColor",
+		"AutomaticSize",
+		"BackgroundColor3",
+		"BackgroundTransparency",
+		"BorderColor3",
+		"BorderMode",
+		"BorderSizePixel",
+		"ClipsDescendants",
+		"Image",
+		"ImageColor3",
+		"ImageRectOffset",
+		"ImageRectSize",
+		"ImageTransparency",
+		"LayoutOrder",
+		"Modal",
+		"Position",
+		"ResampleMode",
+		"Rotation",
+		"ScaleType",
+		"Selectable",
+		"Selected",
+		"Size",
+		"SizeConstraint",
+		"SliceCenter",
+		"SliceScale",
+		"Style",
+		"TileSize",
+		"Visible",
+		"ZIndex",
+	},
+
+	UICorner = {
+		"CornerRadius",
+	},
+
+	UIStroke = {
+		"ApplyStrokeMode",
+		"Color",
+		"Enabled",
+		"LineJoinMode",
+		"Thickness",
+		"Transparency",
+	},
+
+	UIGradient = {
+		"Color",
+		"Enabled",
+		"Offset",
+		"Rotation",
+		"Transparency",
+	},
+
+	UIListLayout = {
+		"FillDirection",
+		"HorizontalAlignment",
+		"Padding",
+		"SortOrder",
+		"VerticalAlignment",
+	},
+
+	UIGridLayout = {
+		"CellPadding",
+		"CellSize",
+		"FillDirection",
+		"HorizontalAlignment",
+		"SortOrder",
+		"StartCorner",
+		"VerticalAlignment",
+	},
+
+	UIPadding = {
+		"PaddingBottom",
+		"PaddingLeft",
+		"PaddingRight",
+		"PaddingTop",
+	},
+
 	Script = {
 		"Disabled",
+		"Enabled",
+		"LinkedSource",
+		"RunContext",
 		"Source",
 	},
 
 	LocalScript = {
 		"Disabled",
+		"Enabled",
+		"LinkedSource",
+		"RunContext",
 		"Source",
 	},
 
 	ModuleScript = {
+		"LinkedSource",
 		"Source",
 	},
 }
@@ -390,8 +775,11 @@ local BASEPART_PROPERTIES = {
 	"CanTouch",
 	"CanQuery",
 	"CastShadow",
+	"CollisionGroup",
 	"Massless",
 	"Locked",
+	"MaterialVariant",
+	"PivotOffset",
 	"RootPriority",
 	"CustomPhysicalProperties",
 }
@@ -415,12 +803,19 @@ local ASSET_PROPERTY_NAMES = {
 }
 
 local DEFAULT_INSTANCE_CACHE = {}
+local HIDDEN_PROPERTY_READER
+local HIDDEN_PROPERTY_READER_CHECKED = false
 
 local function copyDefaults()
 	local options = {
 		IncludeScripts = DEFAULT_OPTIONS.IncludeScripts,
 		SaveAssets = DEFAULT_OPTIONS.SaveAssets,
 		SaveTerrain = DEFAULT_OPTIONS.SaveTerrain,
+		SaveAttributes = DEFAULT_OPTIONS.SaveAttributes,
+		SaveTags = DEFAULT_OPTIONS.SaveTags,
+		SaveHiddenProperties = DEFAULT_OPTIONS.SaveHiddenProperties,
+		RobloxLikeReferents = DEFAULT_OPTIONS.RobloxLikeReferents,
+		ShowStatus = DEFAULT_OPTIONS.ShowStatus,
 		ShowReadMe = DEFAULT_OPTIONS.ShowReadMe,
 		IgnoreDefaultProperties = DEFAULT_OPTIONS.IgnoreDefaultProperties,
 		AlternativeWritefile = DEFAULT_OPTIONS.AlternativeWritefile,
@@ -465,6 +860,26 @@ local function mergeOptions(userOptions)
 
 	if userOptions.SaveTerrain ~= nil then
 		options.SaveTerrain = userOptions.SaveTerrain == true
+	end
+
+	if userOptions.SaveAttributes ~= nil then
+		options.SaveAttributes = userOptions.SaveAttributes == true
+	end
+
+	if userOptions.SaveTags ~= nil then
+		options.SaveTags = userOptions.SaveTags == true
+	end
+
+	if userOptions.SaveHiddenProperties ~= nil then
+		options.SaveHiddenProperties = userOptions.SaveHiddenProperties == true
+	end
+
+	if userOptions.RobloxLikeReferents ~= nil then
+		options.RobloxLikeReferents = userOptions.RobloxLikeReferents == true
+	end
+
+	if userOptions.ShowStatus ~= nil then
+		options.ShowStatus = userOptions.ShowStatus == true
 	end
 
 	if userOptions.ShowReadMe ~= nil then
@@ -707,6 +1122,146 @@ local function appendBinaryString(lines, level, name, value)
 	return true
 end
 
+local function packAttributeValue(value)
+	local valueType = typeof(value)
+
+	if valueType == "string" then
+		return "string", value
+	elseif valueType == "boolean" then
+		return "boolean", value and "true" or "false"
+	elseif valueType == "number" then
+		return "number", formatNumber(value)
+	elseif valueType == "UDim" then
+		return "UDim", table.concat({ formatNumber(value.Scale), tostring(value.Offset) }, ",")
+	elseif valueType == "UDim2" then
+		return "UDim2", table.concat({
+			formatNumber(value.X.Scale),
+			tostring(value.X.Offset),
+			formatNumber(value.Y.Scale),
+			tostring(value.Y.Offset),
+		}, ",")
+	elseif valueType == "BrickColor" then
+		return "BrickColor", tostring(value.Number)
+	elseif valueType == "Color3" then
+		return "Color3", table.concat({
+			formatNumber(value.R),
+			formatNumber(value.G),
+			formatNumber(value.B),
+		}, ",")
+	elseif valueType == "Vector2" then
+		return "Vector2", table.concat({ formatNumber(value.X), formatNumber(value.Y) }, ",")
+	elseif valueType == "Vector3" then
+		return "Vector3", table.concat({ formatNumber(value.X), formatNumber(value.Y), formatNumber(value.Z) }, ",")
+	elseif valueType == "CFrame" then
+		local components = { value:GetComponents() }
+
+		for index, component in ipairs(components) do
+			components[index] = formatNumber(component)
+		end
+
+		return "CFrame", table.concat(components, ",")
+	elseif valueType == "EnumItem" then
+		return "EnumItem", tostring(value.EnumType) .. ":" .. value.Name .. ":" .. tostring(value.Value)
+	elseif valueType == "NumberRange" then
+		return "NumberRange", table.concat({ formatNumber(value.Min), formatNumber(value.Max) }, ",")
+	elseif valueType == "NumberSequence" then
+		local keypoints = {}
+
+		for _, keypoint in ipairs(value.Keypoints) do
+			table.insert(keypoints, table.concat({
+				formatNumber(keypoint.Time),
+				formatNumber(keypoint.Value),
+				formatNumber(keypoint.Envelope),
+			}, ","))
+		end
+
+		return "NumberSequence", table.concat(keypoints, ";")
+	elseif valueType == "ColorSequence" then
+		local keypoints = {}
+
+		for _, keypoint in ipairs(value.Keypoints) do
+			table.insert(keypoints, table.concat({
+				formatNumber(keypoint.Time),
+				formatNumber(keypoint.Value.R),
+				formatNumber(keypoint.Value.G),
+				formatNumber(keypoint.Value.B),
+			}, ","))
+		end
+
+		return "ColorSequence", table.concat(keypoints, ";")
+	end
+
+	return nil
+end
+
+local function packKeyValueBinary(header, values)
+	local lines = { header }
+	local keys = {}
+
+	for key in pairs(values) do
+		table.insert(keys, key)
+	end
+
+	table.sort(keys)
+
+	for _, key in ipairs(keys) do
+		local valueType, packed = packAttributeValue(values[key])
+
+		if valueType then
+			table.insert(lines, table.concat({
+				tostring(#key),
+				key,
+				valueType,
+				tostring(#packed),
+				packed,
+			}, "\t"))
+		end
+	end
+
+	return table.concat(lines, "\n")
+end
+
+local function appendAttributes(lines, level, instance, options)
+	if not options.SaveAttributes then
+		return
+	end
+
+	local ok, attributes = pcall(function()
+		return instance:GetAttributes()
+	end)
+
+	if not ok or type(attributes) ~= "table" or next(attributes) == nil then
+		return
+	end
+
+	appendBinaryString(lines, level, "AttributesSerialize", packKeyValueBinary("DE_ATTRIBUTES_V1", attributes))
+end
+
+local function appendTags(lines, level, instance, options)
+	if not options.SaveTags then
+		return
+	end
+
+	local okService, collectionService = pcall(function()
+		return game:GetService("CollectionService")
+	end)
+
+	if not okService or not collectionService then
+		return
+	end
+
+	local okTags, tags = pcall(function()
+		return collectionService:GetTags(instance)
+	end)
+
+	if not okTags or type(tags) ~= "table" or #tags == 0 then
+		return
+	end
+
+	table.sort(tags)
+	appendBinaryString(lines, level, "Tags", "DE_TAGS_V1\n" .. table.concat(tags, "\n"))
+end
+
 local function appendVector2(lines, level, tagName, name, value)
 	table.insert(lines, string.format("%s<%s name=\"%s\">", indent(level), tagName, xmlEscape(name)))
 	table.insert(lines, string.format("%s<X>%s</X>", indent(level + 1), formatNumber(value.X)))
@@ -904,6 +1459,11 @@ local function report(options, message, progress)
 	if type(options.Callback) == "function" then
 		pcall(options.Callback, message, progress)
 	end
+
+	if options.ShowStatus then
+		local suffix = type(progress) == "number" and (" " .. tostring(math.floor(progress * 100)) .. "%") or ""
+		warn("[D.E save] " .. tostring(message) .. suffix)
+	end
 end
 
 local function canCreateDefault(className)
@@ -969,47 +1529,72 @@ local function isScriptClass(className)
 end
 
 local function getHiddenPropertyReader()
-	local direct = getCallableGlobal("gethiddenproperty") or getCallableGlobal("get_hidden_property")
-
-	if direct then
-		return direct
+	if HIDDEN_PROPERTY_READER_CHECKED then
+		return HIDDEN_PROPERTY_READER
 	end
+
+	HIDDEN_PROPERTY_READER_CHECKED = true
+
+	local direct = getCallableGlobal("gethiddenproperty") or getCallableGlobal("get_hidden_property")
 
 	local okDebug, debugTable = pcall(function()
 		return debug
 	end)
 
-	if okDebug and type(debugTable) == "table" and type(debugTable.gethiddenproperty) == "function" then
-		return debugTable.gethiddenproperty
+	if not direct and okDebug and type(debugTable) == "table" and type(debugTable.gethiddenproperty) == "function" then
+		direct = debugTable.gethiddenproperty
 	end
 
-	return nil
+	if not direct then
+		return nil
+	end
+
+	local okWorkspace = pcall(direct, workspace, "Gravity")
+	local okTerrain = false
+
+	pcall(function()
+		okTerrain = pcall(direct, workspace.Terrain, "SmoothGrid")
+	end)
+
+	if okWorkspace or okTerrain then
+		HIDDEN_PROPERTY_READER = direct
+	end
+
+	return HIDDEN_PROPERTY_READER
+end
+
+local function appendUniqueError(errors, message)
+	if not errors then
+		return
+	end
+
+	for _, existing in ipairs(errors) do
+		if existing == message then
+			return
+		end
+	end
+
+	table.insert(errors, message)
 end
 
 local function appendHiddenBinaryProperty(lines, level, instance, propertyName, errors)
 	local gethiddenproperty = getHiddenPropertyReader()
 
 	if not gethiddenproperty then
-		if errors then
-			table.insert(errors, propertyName .. ": executor does not provide gethiddenproperty")
-		end
-
+		appendUniqueError(errors, "executor does not provide gethiddenproperty")
 		return false
 	end
 
 	local okRead, value = pcall(gethiddenproperty, instance, propertyName)
 
 	if not okRead then
-		if errors then
-			table.insert(errors, propertyName .. ": " .. tostring(value))
-		end
-
+		appendUniqueError(errors, propertyName .. ": " .. tostring(value))
 		return false
 	end
 
 	if type(value) ~= "string" then
-		if errors and value ~= nil then
-			table.insert(errors, propertyName .. ": expected string, got " .. typeof(value))
+		if value ~= nil then
+			appendUniqueError(errors, propertyName .. ": expected string, got " .. typeof(value))
 		end
 
 		return false
@@ -1017,8 +1602,8 @@ local function appendHiddenBinaryProperty(lines, level, instance, propertyName, 
 
 	local okWrite, writeErr = appendBinaryString(lines, level, propertyName, value)
 
-	if not okWrite and errors then
-		table.insert(errors, propertyName .. ": " .. tostring(writeErr))
+	if not okWrite then
+		appendUniqueError(errors, propertyName .. ": " .. tostring(writeErr))
 	end
 
 	return okWrite
@@ -1123,11 +1708,28 @@ local function collectInstances(root, options, list, forceInclude)
 	end
 end
 
-local function buildReferences(instances)
+local function makeRobloxLikeReferent(index)
+	local seed = (index * 1103515245 + 12345) % 0x100000000
+	local parts = {}
+
+	for offset = 1, 32 do
+		seed = (seed * 1664525 + 1013904223 + offset) % 0x100000000
+		local nibble = seed % 16
+		parts[offset] = string.format("%X", nibble)
+	end
+
+	return "RBX" .. table.concat(parts)
+end
+
+local function buildReferences(instances, options)
 	local references = {}
 
 	for index, instance in ipairs(instances) do
-		references[instance] = "RBX" .. tostring(index)
+		if options.RobloxLikeReferents then
+			references[instance] = makeRobloxLikeReferent(index)
+		else
+			references[instance] = "RBX" .. tostring(index)
+		end
 	end
 
 	return references
@@ -1150,7 +1752,10 @@ local function appendProperties(lines, level, instance, references, options)
 		end
 	end
 
-	if options.SaveTerrain and instance:IsA("Terrain") then
+	appendAttributes(lines, level + 1, instance, options)
+	appendTags(lines, level + 1, instance, options)
+
+	if options.SaveTerrain and options.SaveHiddenProperties and instance:IsA("Terrain") then
 		local terrainErrors = options._TerrainErrors
 
 		appendHiddenBinaryProperty(lines, level + 1, instance, "SmoothGrid", terrainErrors)
@@ -1159,9 +1764,9 @@ local function appendProperties(lines, level, instance, references, options)
 
 	local hiddenMeshProperties = HIDDEN_MESH_BINARY_PROPERTIES[instance.ClassName]
 
-	if hiddenMeshProperties then
+	if options.SaveHiddenProperties and hiddenMeshProperties then
 		for _, propertyName in ipairs(hiddenMeshProperties) do
-			appendHiddenBinaryProperty(lines, level + 1, instance, propertyName)
+			appendHiddenBinaryProperty(lines, level + 1, instance, propertyName, options._HiddenErrors)
 		end
 	end
 
@@ -1248,6 +1853,7 @@ end
 local function buildDocument(root, options)
 	local instances = {}
 	options._TerrainErrors = {}
+	options._HiddenErrors = {}
 	report(options, "Collecting instances", 0)
 	collectInstances(root, options, instances, true)
 	local sawTerrain = false
@@ -1259,10 +1865,12 @@ local function buildDocument(root, options)
 		end
 	end
 
-	local references = buildReferences(instances)
+	local references = buildReferences(instances, options)
 	local lines = {
 		"<?xml version=\"1.0\" encoding=\"utf-8\"?>",
 		"<roblox version=\"4\">",
+		"\t<External>null</External>",
+		"\t<External>nil</External>",
 		"\t<Meta name=\"ExplicitAutoJoints\">true</Meta>",
 	}
 
@@ -1275,7 +1883,11 @@ local function buildDocument(root, options)
 		table.insert(options._TerrainErrors, "terrain was not found under the selected root")
 	end
 
-	table.insert(lines, "</roblox>")
+	if options.SaveTerrain and not options.SaveHiddenProperties then
+		table.insert(options._TerrainErrors, "SaveHiddenProperties must be enabled to embed SmoothGrid and PhysicsGrid")
+	end
+
+	table.insert(lines, "</roblox><!-- Saved by D.E save -->")
 	report(options, "XML ready", 0.75)
 
 	local terrainResult = {
@@ -1283,9 +1895,14 @@ local function buildDocument(root, options)
 		Files = {},
 		Errors = options._TerrainErrors,
 	}
+	local hiddenResult = {
+		Enabled = options.SaveHiddenProperties == true,
+		Errors = options._HiddenErrors,
+	}
 	options._TerrainErrors = nil
+	options._HiddenErrors = nil
 
-	return table.concat(lines, "\n"), terrainResult
+	return table.concat(lines, "\n"), terrainResult, hiddenResult
 end
 
 local function getExecutorEnvironment()
@@ -1624,7 +2241,8 @@ function SaveInstance.SaveInstance(root, userOptions)
 	assert(typeof(root) == "Instance", "SaveInstance(root, options) expects root to be an Instance")
 
 	local options = mergeOptions(userOptions)
-	return buildDocument(root, options)
+	local xml = buildDocument(root, options)
+	return xml
 end
 
 function SaveInstance.SaveToFile(root, filePath, userOptions)
@@ -1647,7 +2265,7 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		options.AssetsFolder = normalizePath(folder .. "/" .. DEFAULT_OPTIONS.AssetsFolder)
 	end
 
-	local xml, terrainResult = buildDocument(root, options)
+	local xml, terrainResult, hiddenResult = buildDocument(root, options)
 	local okWrite, writeErr = writeFileSegmented(normalizedPath, xml, options)
 
 	if not okWrite then
@@ -1673,6 +2291,10 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		table.insert(errors, err)
 	end
 
+	for _, err in ipairs(hiddenResult.Errors) do
+		table.insert(errors, err)
+	end
+
 	report(options, "Done", 1)
 
 	return {
@@ -1681,6 +2303,7 @@ function SaveInstance.SaveToFile(root, filePath, userOptions)
 		Content = xml,
 		Assets = assetResult.Assets,
 		Terrain = terrainResult,
+		HiddenProperties = hiddenResult,
 		Errors = errors,
 	}
 end
